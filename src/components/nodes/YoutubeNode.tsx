@@ -42,9 +42,14 @@ export function YoutubeNode({ id, data, selected }: NodeProps) {
             placeholder="https://youtube.com/watch?v=…"
             className="w-full bg-ink-900 border border-ink-600 px-2 py-1.5 text-xs font-mono text-bone-100 focus:border-ember outline-none rounded-sm"
           />
+          {d.status !== 'error' && (
+            <p className="mt-1.5 text-[10px] font-mono text-bone-400 leading-snug">
+              Needs captions enabled. TED Talks, podcasts, and most educational channels work.
+            </p>
+          )}
           <ExtractButton onClick={handleExtract} disabled={d.status === 'pending' || !draftUrl} />
           {d.status === 'error' && (
-            <div className="mt-2 text-[11px] font-mono text-red-400">{d.error}</div>
+            <div className="mt-2 text-[11px] font-sans text-red-400 leading-snug">{d.error}</div>
           )}
         </>
       )}
