@@ -31,7 +31,19 @@ export async function extractNode(
       });
     }
 
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) {
+      const raw = await res.text();
+      let msg = raw;
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object' && 'error' in parsed) {
+          msg = String((parsed as { error: unknown }).error);
+        }
+      } catch {
+        // not JSON, fall back to raw text
+      }
+      throw new Error(msg);
+    }
     const result = (await res.json()) as { title: string; content: string; meta?: Record<string, unknown> };
 
     const existing = flow.getNode(nodeId)?.data ?? ({} as CanvasNodeData);
