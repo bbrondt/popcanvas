@@ -65,14 +65,30 @@ export function ChatNode({ id, data, selected }: NodeProps) {
         }),
       });
 
+      // /api/chat returns 200 with an SSE body on success. Anything else means
+      // the server failed before streaming started (auth, env vars, etc.) and
+      // the body is JSON like {"error":"...","scope":"..."}, not SSE.
+      if (!res.ok) {
+        const raw = await res.text();
+        let msg = raw;
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object' && 'error' in parsed) {
+            msg = String((parsed as { error: unknown }).error);
+          }
+        } catch {
+          // not JSON, use raw
+        }
+        throw new Error(msg || `chat request failed (${res.status})`);
+      }
       if (!res.body) throw new Error('No response body');
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
       let assembled = '';
 
-      // Stream loop - only updates LOCAL component state, not the flow store.
-      while (true) {
+      // Stream loop. Updates LOCAL component state on each frame.
+      streamLoop: while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
@@ -82,19 +98,31 @@ export function ChatNode({ id, data, selected }: NodeProps) {
         for (const frame of frames) {
           const line = frame.replace(/^data:\s*/, '').trim();
           if (!line) continue;
+          // Parse JSON. If it fails, the frame is malformed — skip it.
+          let event: { type: string; text?: string; error?: string } | null = null;
           try {
-            const event = JSON.parse(line) as { type: string; text?: string; error?: string };
-            if (event.type === 'text' && event.text) {
-              assembled += event.text;
-              setStreamingText(assembled);
-            } else if (event.type === 'error') {
-              throw new Error(event.error ?? 'Stream error');
-            }
-          } catch (err) {
-            if (err instanceof Error && err.message.startsWith('Stream error')) throw err;
-            // ignore malformed JSON frames
+            event = JSON.parse(line);
+          } catch {
+            continue;
+          }
+          if (!event) continue;
+          if (event.type === 'text' && event.text) {
+            assembled += event.text;
+            setStreamingText(assembled);
+          } else if (event.type === 'error') {
+            // Server-side stream error. Stop reading and bubble up to the
+            // outer catch with the actual message instead of swallowing it.
+            throw new Error(event.error ?? 'Stream error');
+          } else if (event.type === 'done') {
+            break streamLoop;
           }
         }
+      }
+
+      if (!assembled.trim()) {
+        throw new Error(
+          'Claude returned an empty response. Check Vercel function logs for [chat:stream] errors.',
+        );
       }
 
       // Single commit to the node store at the end with the full message.
@@ -123,6 +151,7 @@ export function ChatNode({ id, data, selected }: NodeProps) {
       setIsStreaming(false);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unknown error';
+      console.error('[ChatNode] send failed:', err);
       flow.setNodes((nodes) =>
         nodes.map((n) =>
           n.id === id
@@ -138,6 +167,7 @@ export function ChatNode({ id, data, selected }: NodeProps) {
             : n,
         ),
       );
+      setStreamingText('');
       setIsStreaming(false);
     }
   };
@@ -188,6 +218,9 @@ export function ChatNode({ id, data, selected }: NodeProps) {
             }}
           />
         )}
+        {!isStreaming && d.error && (
+          <ChatError message={d.error} onDismiss={() => flow.updateNodeData(id, { ...d, error: undefined })} />
+        )}
       </div>
 
       <div className="border-t border-ink-600 pt-2">
@@ -221,6 +254,20 @@ function Message({ message }: { message: ChatMessage }) {
     <div className={`text-[12px] ${isUser ? 'text-bone-200' : 'text-bone-50'}`}>
       <div className="node-label mb-1">{isUser ? '› you' : '⌘ claude'}</div>
       <div className="font-sans leading-relaxed whitespace-pre-wrap">{message.content}</div>
+    </div>
+  );
+}
+
+function ChatError({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+  return (
+    <div className="border border-red-500/40 bg-red-500/5 px-2 py-1.5 text-[11px] font-sans text-red-300 rounded-sm flex items-start gap-2">
+      <div className="flex-1 leading-snug">
+        <div className="node-label text-red-400 mb-0.5">chat error</div>
+        {message}
+      </div>
+      <button onClick={onDismiss} className="text-red-300 hover:text-red-100 font-mono text-xs leading-none">
+        ×
+      </button>
     </div>
   );
 }
