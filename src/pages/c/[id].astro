@@ -1,0 +1,11 @@
+---
+import Base from '@/layouts/Base.astro';
+import { Canvas } from '@/components/canvas/Canvas';
+
+const { id } = Astro.params;
+if (!id) return Astro.redirect('/');
+---
+
+<Base title="popcanvas">
+  <Canvas client:only="react" canvasId={id} />
+</Base>

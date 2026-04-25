@@ -1,0 +1,179 @@
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600&family=Geist:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --grid-line: rgba(245, 241, 232, 0.04);
+    --grid-line-strong: rgba(245, 241, 232, 0.08);
+  }
+
+  html, body {
+    background: theme('colors.ink.950');
+    color: theme('colors.bone.100');
+    font-family: theme('fontFamily.sans');
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* React Flow theming overrides. These selectors apply globally so
+     the React Flow CSS we import (in Canvas.tsx) gets restyled to match. */
+  .react-flow {
+    background: theme('colors.ink.950');
+  }
+
+  .react-flow__background {
+    background-color: theme('colors.ink.950');
+  }
+
+  .react-flow__edge-path {
+    stroke: theme('colors.bone.400');
+    stroke-width: 1.5;
+    stroke-dasharray: 4 6;
+    opacity: 0.7;
+  }
+
+  .react-flow__edge.selected .react-flow__edge-path,
+  .react-flow__edge:hover .react-flow__edge-path {
+    stroke: theme('colors.ember.DEFAULT');
+    opacity: 1;
+  }
+
+  .react-flow__connection-path {
+    stroke: theme('colors.ember.DEFAULT');
+    stroke-width: 1.5;
+  }
+
+  .react-flow__handle {
+    width: 10px;
+    height: 10px;
+    background: theme('colors.ink.800');
+    border: 1.5px solid theme('colors.bone.400');
+    border-radius: 50%;
+  }
+
+  .react-flow__handle:hover {
+    background: theme('colors.ember.DEFAULT');
+    border-color: theme('colors.ember.DEFAULT');
+  }
+
+  .react-flow__controls {
+    background: theme('colors.ink.800');
+    border: 1px solid theme('colors.ink.600');
+    border-radius: 6px;
+    overflow: hidden;
+    box-shadow: 0 8px 24px -8px rgba(0,0,0,0.6);
+  }
+
+  .react-flow__controls-button {
+    background: transparent;
+    border-bottom: 1px solid theme('colors.ink.600');
+    color: theme('colors.bone.200');
+    width: 28px;
+    height: 28px;
+  }
+
+  .react-flow__controls-button:hover {
+    background: theme('colors.ink.700');
+    color: theme('colors.ember.DEFAULT');
+  }
+
+  .react-flow__controls-button svg {
+    fill: currentColor;
+    width: 12px;
+    height: 12px;
+  }
+
+  .react-flow__minimap {
+    background: theme('colors.ink.900');
+    border: 1px solid theme('colors.ink.600');
+    border-radius: 6px;
+  }
+
+  .react-flow__attribution {
+    background: transparent;
+    color: theme('colors.bone.400');
+    font-family: theme('fontFamily.mono');
+    font-size: 9px;
+  }
+
+  .react-flow__attribution a {
+    color: theme('colors.bone.300');
+  }
+}
+
+@layer components {
+  .node-frame {
+    @apply relative bg-ink-800 border border-ink-600 shadow-node;
+    border-radius: 2px;
+  }
+
+  .node-frame::before,
+  .node-frame::after {
+    content: '';
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    border-color: theme('colors.bone.300');
+    border-style: solid;
+    border-width: 0;
+    pointer-events: none;
+    transition: border-color 0.15s ease;
+  }
+
+  .node-frame::before {
+    top: -1px;
+    left: -1px;
+    border-top-width: 1px;
+    border-left-width: 1px;
+  }
+
+  .node-frame::after {
+    bottom: -1px;
+    right: -1px;
+    border-bottom-width: 1px;
+    border-right-width: 1px;
+  }
+
+  .node-frame.is-selected {
+    @apply border-ember;
+  }
+
+  .node-frame.is-selected::before,
+  .node-frame.is-selected::after {
+    border-color: theme('colors.ember.DEFAULT');
+  }
+
+  .node-label {
+    @apply font-mono text-[10px] uppercase tracking-[0.18em] text-bone-400;
+  }
+
+  .node-title {
+    @apply font-display text-[15px] leading-tight text-bone-50;
+  }
+
+  .pill-btn {
+    @apply font-mono text-[10px] uppercase tracking-[0.16em] px-3 py-1.5
+           border border-ink-500 text-bone-200 hover:text-ember hover:border-ember
+           transition-colors duration-150;
+    border-radius: 2px;
+  }
+
+  .pill-btn-primary {
+    @apply pill-btn border-ember bg-ember text-ink-950 hover:bg-ember-glow hover:text-ink-950 hover:border-ember-glow;
+  }
+
+  .canvas-grid::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(var(--grid-line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+    background-size: 32px 32px;
+    background-position: 0 0;
+    pointer-events: none;
+    z-index: 0;
+  }
+}

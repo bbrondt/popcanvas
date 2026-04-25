@@ -1,0 +1,22 @@
+---
+import '@/styles/global.css';
+
+interface Props {
+  title?: string;
+}
+
+const { title = 'popcanvas' } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{title}</title>
+    <meta name="description" content="A spatial canvas for multi-source AI chat. Learning scaffold inspired by Poppy AI." />
+  </head>
+  <body class="overflow-hidden">
+    <slot />
+  </body>
+</html>
