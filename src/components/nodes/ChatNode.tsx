@@ -1,8 +1,15 @@
 import { useState, useRef, useEffect } from 'react';
-import { useReactFlow, useStore, type NodeProps } from '@xyflow/react';
+import { useReactFlow, useStore, type Node, type Edge, type NodeProps } from '@xyflow/react';
 import { NodeShell } from './NodeShell';
 import { nanoid } from 'nanoid';
-import { NODE_WIDTH, type ChatNodeData, type ChatMessage, type SourceNodeData } from '@/lib/types';
+import {
+  NODE_WIDTH,
+  type ArtifactNodeData,
+  type ArtifactTemplateId,
+  type ChatNodeData,
+  type ChatMessage,
+  type SourceNodeData,
+} from '@/lib/types';
 
 export function ChatNode({ id, data, selected }: NodeProps) {
   const d = data as ChatNodeData;
@@ -112,6 +119,11 @@ export function ChatNode({ id, data, selected }: NodeProps) {
           if (event.type === 'text' && event.text) {
             assembled += event.text;
             setStreamingText(assembled);
+          } else if (event.type === 'tool_use') {
+            // Claude wants to spawn an asset. Create the artifact node now
+            // and connect it to this chat (and to the same sources). It
+            // auto-generates as soon as it mounts.
+            handleToolUse(event as { name: string; input: unknown });
           } else if (event.type === 'error') {
             // Server-side stream error. Stop reading and bubble up to the
             // outer catch with the actual message instead of swallowing it.
@@ -180,6 +192,64 @@ export function ChatNode({ id, data, selected }: NodeProps) {
       e.preventDefault();
       handleSend();
     }
+  };
+
+  /**
+   * Spawn a new ArtifactNode in response to Claude's create_artifact tool
+   * call. Wire it to this chat AND to the same sources (so it inherits
+   * the chat's context). Position to the right of this node, stacking
+   * downward if there are already artifacts in that column.
+   */
+  const handleToolUse = (event: { name: string; input: unknown }) => {
+    if (event.name !== 'create_artifact') return;
+    const input = (event.input ?? {}) as { template?: string; instructions?: string };
+    const tplId = isValidTemplate(input.template) ? input.template : 'custom';
+    const customInstructions = input.instructions?.trim() || '';
+
+    const allNodes = flow.getNodes();
+    const allEdges = flow.getEdges();
+    const me = allNodes.find((n) => n.id === id);
+    if (!me) return;
+
+    const artifactId = `artifact-${nanoid(6)}`;
+
+    // Stack vertically if other artifacts already sit to my right.
+    const myRight = me.position.x + (me.width ?? NODE_WIDTH.chat);
+    const stackedY = allNodes
+      .filter((n) => (n.data as { kind?: string })?.kind === 'artifact' && n.position.x > myRight - 40)
+      .reduce((max, n) => Math.max(max, n.position.y + (n.height ?? 400) + 24), me.position.y);
+
+    const artifactNode: Node = {
+      id: artifactId,
+      type: 'artifact',
+      position: { x: myRight + 80, y: stackedY === me.position.y ? me.position.y : stackedY },
+      data: {
+        kind: 'artifact',
+        status: 'pending',
+        template: tplId,
+        customInstructions,
+        autoGenerate: true,
+      } satisfies ArtifactNodeData,
+    };
+
+    // Wire chat -> artifact, plus every source -> artifact so the new node
+    // has the same context as this chat.
+    const newEdges: Edge[] = [
+      { id: `e-${id}-${artifactId}`, source: id, target: artifactId, animated: true },
+    ];
+    for (const e of allEdges) {
+      if (e.target === id) {
+        newEdges.push({
+          id: `e-${e.source}-${artifactId}`,
+          source: e.source,
+          target: artifactId,
+          animated: true,
+        });
+      }
+    }
+
+    flow.addNodes(artifactNode);
+    flow.addEdges(newEdges);
   };
 
   return (
@@ -299,6 +369,22 @@ function Message({ message }: { message: ChatMessage }) {
       <div className="font-sans leading-relaxed whitespace-pre-wrap">{message.content}</div>
     </div>
   );
+}
+
+const VALID_TEMPLATES: ArtifactTemplateId[] = [
+  'youtube-script',
+  'video-script',
+  'lead-magnet',
+  'ad-copy',
+  'tweet-thread',
+  'blog-post',
+  'email-sequence',
+  'linkedin-post',
+  'custom',
+];
+
+function isValidTemplate(t: string | undefined): t is ArtifactTemplateId {
+  return !!t && (VALID_TEMPLATES as string[]).includes(t);
 }
 
 const QUICK_PROMPTS: { label: string; prompt: string }[] = [

@@ -1,7 +1,46 @@
 import type { APIRoute } from 'astro';
 import { findConnectedSources, buildSystemPrompt, buildMessages } from '@/lib/ai/prompt';
-import { streamChat } from '@/lib/ai/anthropic';
+import { streamChat, type ToolDef } from '@/lib/ai/anthropic';
+import { TEMPLATES } from '@/lib/ai/templates';
 import type { ChatRequest } from '@/lib/types';
+
+/**
+ * Tool Claude can invoke from inside chat. When the user asks for an asset
+ * ("write me a video script", "make me a lead magnet"), Claude calls this
+ * instead of writing the asset inline. The frontend listens for tool_use
+ * SSE frames and spawns a connected ArtifactNode that generates the asset
+ * in its own panel — so the chat stays a chat, and the asset lives next
+ * to it on the canvas.
+ */
+const TEMPLATE_IDS = TEMPLATES.map((t) => t.id);
+
+const CHAT_TOOLS: ToolDef[] = [
+  {
+    name: 'create_artifact',
+    description: `Create a new long-form deliverable on the canvas (script, lead magnet, ad copy, blog post, email sequence, tweet thread, LinkedIn post, etc).
+
+Call this when the user asks for an ASSET to be produced — anything they would copy, edit, download, or ship. Do NOT call this for short answers, summaries, or back-and-forth discussion; just reply with text for those.
+
+After calling this tool, briefly tell the user (in 1-2 sentences) what asset you started and any creative direction you're taking. Don't paste the artifact into chat — it lives in its own panel.
+
+Pick the template that best fits the user's request. Use 'custom' only when none of the named templates fit, and provide explicit instructions in that case.`,
+    input_schema: {
+      type: 'object',
+      properties: {
+        template: {
+          type: 'string',
+          enum: TEMPLATE_IDS,
+          description: 'Which template to use. Pick the closest fit to what the user asked for.',
+        },
+        instructions: {
+          type: 'string',
+          description: `Required when template is 'custom'. For named templates this is OPTIONAL extra direction (audience, angle, tone) layered on top of the template's defaults — leave empty if the user gave no extra direction.`,
+        },
+      },
+      required: ['template'],
+    },
+  },
+];
 
 export const prerender = false;
 
@@ -58,10 +97,18 @@ export const POST: APIRoute = async ({ request }) => {
       const enc = new TextEncoder();
       try {
         await streamChat({
-          systemPrompt,
+          systemPrompt: systemPrompt + '\n\n' + TOOL_USE_HINT,
           messages,
+          tools: CHAT_TOOLS,
           onText: (chunk) => {
             controller.enqueue(enc.encode(`data: ${JSON.stringify({ type: 'text', text: chunk })}\n\n`));
+          },
+          onToolUse: (call) => {
+            controller.enqueue(
+              enc.encode(
+                `data: ${JSON.stringify({ type: 'tool_use', id: call.id, name: call.name, input: call.input })}\n\n`,
+              ),
+            );
           },
         });
         controller.enqueue(enc.encode(`data: ${JSON.stringify({ type: 'done' })}\n\n`));
@@ -87,6 +134,10 @@ export const POST: APIRoute = async ({ request }) => {
     },
   });
 };
+
+const TOOL_USE_HINT = `When the user asks you to produce a deliverable (script, lead magnet, ad copy, blog post, email sequence, tweet thread, LinkedIn post, etc.), call the create_artifact tool. The artifact is shown to the user in its own panel on the canvas — you don't need to paste it into chat. After invoking the tool, briefly describe the asset you started.
+
+For questions, summaries, brainstorming, or back-and-forth discussion: just answer in chat. Don't create artifacts for those.`;
 
 function logAndFail(scope: string, err: unknown): Response {
   const e = err instanceof Error ? err : new Error(String(err));

@@ -47,6 +47,21 @@ export function ArtifactNode({ id, data, selected }: NodeProps) {
     flow.updateNodeData(id, { ...d, output: text });
   };
 
+  // Auto-generate on mount when chat spawned this node via tool use. We
+  // clear the flag immediately so re-mounts (canvas reload, edit, etc.)
+  // don't re-fire generation. Defer to next tick so other props/state
+  // settle first.
+  useEffect(() => {
+    if (d.autoGenerate && !isGenerating && !output) {
+      flow.updateNodeData(id, { ...d, autoGenerate: false });
+      const t = setTimeout(() => {
+        void generate();
+      }, 50);
+      return () => clearTimeout(t);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const generate = async () => {
     if (isGenerating) return;
     if (connectedSources.length === 0) {

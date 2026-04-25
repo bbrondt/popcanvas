@@ -92,6 +92,13 @@ export interface ArtifactNodeData extends BaseNodeData {
   /** Generated long-form output. Editable by the user after generation. */
   output?: string;
   isGenerating?: boolean;
+  /**
+   * When true, the node fires generate() on mount instead of waiting for a
+   * Generate button click. Used by chat-spawned artifacts so the user sees
+   * the asset start writing itself the moment Claude calls create_artifact.
+   * Cleared after the first generation so re-mounts don't re-fire.
+   */
+  autoGenerate?: boolean;
 }
 
 export type SourceNodeData =
