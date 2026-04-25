@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, useRef, useMemo } from 'react';
+import { nanoid } from 'nanoid';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -41,15 +42,30 @@ interface CanvasProps {
 // sits, so the user opens the canvas and immediately sees what the consumer of
 // their sources looks like. They still have to add sources from the toolbar
 // and draw a connection — the empty-state hint guides that.
-function seedNodes(): Node[] {
-  return [
-    {
-      id: 'chat-seed',
-      type: 'chat',
-      position: { x: 520, y: 180 },
-      data: { kind: 'chat', status: 'idle', messages: [] },
-    },
-  ];
+function makeChatSeed(): Node {
+  return {
+    id: `chat-${nanoid(6)}`,
+    type: 'chat',
+    position: { x: 520, y: 180 },
+    data: { kind: 'chat', status: 'idle', messages: [] },
+  };
+}
+
+function ensureChatNode(loaded: Node[]): Node[] {
+  if (loaded.some((n) => (n.data as { kind?: string })?.kind === 'chat')) {
+    return loaded;
+  }
+  // Place the seeded chat node to the right of any existing nodes so it doesn't
+  // overlap them on canvases that already have sources but no chat.
+  const rightEdge = loaded.reduce(
+    (max, n) => Math.max(max, n.position.x + (n.width ?? 280)),
+    0,
+  );
+  const chat = makeChatSeed();
+  if (rightEdge > 0) {
+    chat.position = { x: rightEdge + 80, y: 180 };
+  }
+  return [...loaded, chat];
 }
 
 function CanvasInner({ canvasId }: CanvasProps) {
@@ -67,15 +83,17 @@ function CanvasInner({ canvasId }: CanvasProps) {
         if (res.ok) {
           const data = await res.json();
           const loadedNodes = (data.nodes ?? []) as Node[];
-          setNodes(loadedNodes.length > 0 ? loadedNodes : seedNodes());
+          // Always make sure a chat node is present, even on existing canvases
+          // that pre-date the auto-seed. Idempotent: no-op if one exists.
+          setNodes(ensureChatNode(loadedNodes));
           setEdges(data.edges ?? []);
           setTitle(data.title ?? 'Untitled canvas');
         } else {
           // Brand new canvas (404 or error): seed it.
-          setNodes(seedNodes());
+          setNodes(ensureChatNode([]));
         }
       } catch {
-        setNodes(seedNodes());
+        setNodes(ensureChatNode([]));
       } finally {
         setLoaded(true);
       }

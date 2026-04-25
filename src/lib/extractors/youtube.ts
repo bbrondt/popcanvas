@@ -23,10 +23,10 @@ export async function extractYoutube({ url }: { url: string }): Promise<Extracti
   } catch (err) {
     const raw = err instanceof Error ? err.message : String(err);
     const cleaned = raw.replace(/^\[YoutubeTranscript\]\s*🚨?\s*/u, '').trim();
-    throw new Error(cleaned || 'Could not fetch transcript for this video.');
+    throw new Error(friendlyYoutubeError(cleaned, videoId));
   }
   if (!segments.length) {
-    throw new Error('No transcript available for this video.');
+    throw new Error(friendlyYoutubeError('No transcript available for this video.', videoId));
   }
 
   const transcript = segments.map((s) => s.text).join(' ').replace(/\s+/g, ' ').trim();
@@ -54,4 +54,29 @@ export async function extractYoutube({ url }: { url: string }): Promise<Extracti
       segmentCount: segments.length,
     },
   };
+}
+
+/**
+ * Most YouTube extraction failures come from the same root cause: the uploader
+ * disabled captions, or this is a video type (Shorts, livestreams, music
+ * videos) where YouTube doesn't auto-generate them. Surface that plainly so
+ * the user knows to try a different video instead of debugging.
+ */
+function friendlyYoutubeError(reason: string, videoId: string): string {
+  const lower = reason.toLowerCase();
+  const isCaptionIssue =
+    lower.includes('disabled') ||
+    lower.includes('no transcript') ||
+    lower.includes('not available') ||
+    lower.includes('captions');
+  if (isCaptionIssue) {
+    return `This YouTube video (${videoId}) doesn't have a readable transcript — captions are either disabled or this video type doesn't get them. Try a video where the CC button works on YouTube (TED Talks, conference talks, podcasts, most educational channels).`;
+  }
+  if (lower.includes('captcha') || lower.includes('too many requests')) {
+    return `YouTube is rate-limiting transcript fetches from this server. Wait a few minutes and try again, or use a different video.`;
+  }
+  if (lower.includes('no longer available') || lower.includes('unavailable')) {
+    return `This video isn't available (private, deleted, or region-locked).`;
+  }
+  return reason;
 }
