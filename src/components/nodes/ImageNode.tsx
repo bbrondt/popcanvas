@@ -26,7 +26,7 @@ export function ImageNode({ id, data, selected }: NodeProps) {
   };
 
   return (
-    <NodeShell selected={!!selected} width={NODE_WIDTH.image} status={d.status}>
+    <NodeShell id={id} selected={!!selected} width={NODE_WIDTH.image} status={d.status}>
       <div className="flex items-center justify-between mb-2">
         <span className="node-label">▢ image</span>
         <StatusPill status={d.status} />

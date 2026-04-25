@@ -19,7 +19,7 @@ export function TextNode({ id, data, selected }: NodeProps) {
   };
 
   return (
-    <NodeShell selected={!!selected} width={NODE_WIDTH.text} status={d.status}>
+    <NodeShell id={id} selected={!!selected} width={NODE_WIDTH.text} status={d.status}>
       <div className="flex items-center justify-between mb-2">
         <span className="node-label">¶ text</span>
         <StatusPill status={d.status} />

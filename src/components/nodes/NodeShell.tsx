@@ -1,8 +1,10 @@
-import { Handle, Position, type NodeProps } from '@xyflow/react';
+import { Handle, Position, useReactFlow } from '@xyflow/react';
 import type { ReactNode } from 'react';
 import type { ExtractionStatus } from '@/lib/types';
 
 interface NodeShellProps {
+  /** id is required when we want to render delete/move affordances. */
+  id?: string;
   selected: boolean;
   width?: number;
   /** Show input handle on the left. False for pure source nodes. */
@@ -14,6 +16,7 @@ interface NodeShellProps {
 }
 
 export function NodeShell({
+  id,
   selected,
   width = 280,
   inputHandle = false,
@@ -40,6 +43,7 @@ export function NodeShell({
           style={{ right: -5 }}
         />
       )}
+      {id && selected && <DeleteNodeButton id={id} />}
       <div className="p-3">
         {status === 'pending' && (
           <div className="absolute inset-0 pointer-events-none">
@@ -49,6 +53,23 @@ export function NodeShell({
         {children}
       </div>
     </div>
+  );
+}
+
+function DeleteNodeButton({ id }: { id: string }) {
+  const flow = useReactFlow();
+  const handle = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    flow.deleteElements({ nodes: [{ id }] });
+  };
+  return (
+    <button
+      onClick={handle}
+      title="Delete node (or press Backspace / Delete)"
+      className="absolute -top-2.5 -right-2.5 z-10 w-6 h-6 flex items-center justify-center bg-ink-700 border border-ink-500 text-bone-300 hover:bg-red-500/20 hover:border-red-400 hover:text-red-300 transition-colors rounded-full font-mono text-[12px] leading-none shadow-node"
+    >
+      ×
+    </button>
   );
 }
 

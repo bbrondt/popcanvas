@@ -5,6 +5,10 @@ import vercel from '@astrojs/vercel';
 
 export default defineConfig({
   output: 'server',
+  // checkOrigin (on by default in Astro 5 server mode) rejects multipart
+  // POSTs from the same origin in some Vercel routing scenarios, which
+  // breaks file uploads to /api/extract. Off until real auth lands.
+  security: { checkOrigin: false },
   adapter: vercel({
     // Streaming chat + AssemblyAI ASR fallback for YouTube can both push
     // beyond a minute. 300 is the Vercel Pro maximum; on Hobby this caps at
