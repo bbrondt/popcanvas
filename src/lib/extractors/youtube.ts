@@ -120,14 +120,26 @@ async function transcribeWithAssemblyAI(args: {
 }
 
 async function downloadAudio(url: string): Promise<Buffer> {
-  // ytdl emits Buffer chunks; we collect them. If YouTube serves a bot-check
-  // page from a datacenter IP, ytdl throws with a recognizable message — we
-  // re-throw with a clearer one.
+  // YouTube blocks unauthenticated requests from datacenter IPs (Vercel) by
+  // serving a "Sign in to confirm you're not a bot" page. If YT_COOKIES is
+  // set, pass the cookie header so we look like a logged-in user. Format:
+  // a single string copy-pasted from the Cookie header in browser devtools.
+  const cookies = import.meta.env.YT_COOKIES;
+  const requestOptions: { headers?: Record<string, string> } = {};
+  if (cookies) {
+    requestOptions.headers = {
+      cookie: cookies,
+      'user-agent':
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+    };
+  }
+
   try {
     const stream = ytdl(url, {
       filter: 'audioonly',
       quality: 'lowestaudio',
-      highWaterMark: 1 << 25, // 32MB internal buffer to ride out YT throttling
+      highWaterMark: 1 << 25,
+      requestOptions,
     });
     const chunks: Buffer[] = [];
     for await (const chunk of stream as AsyncIterable<Buffer>) {
@@ -138,7 +150,9 @@ async function downloadAudio(url: string): Promise<Buffer> {
     const raw = err instanceof Error ? err.message : String(err);
     if (raw.includes('Sign in') || raw.includes('confirm') || raw.includes('bot')) {
       throw new Error(
-        `YouTube is challenging this request as a bot. Try again in a minute, or configure ytdl cookies if it persists.`,
+        cookies
+          ? `YouTube rejected our cookies as expired or invalid. Refresh YT_COOKIES from a logged-in browser session.`
+          : `YouTube blocks audio downloads from datacenter IPs without authentication. Set YT_COOKIES in Vercel env (paste the Cookie header from a logged-in YouTube tab) to bypass this.`,
       );
     }
     throw new Error(`Could not download audio from YouTube: ${raw}`);

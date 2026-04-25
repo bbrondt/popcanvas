@@ -18,6 +18,7 @@ export const GET: APIRoute = async () => {
     hasSupabaseAnon: Boolean(import.meta.env.PUBLIC_SUPABASE_ANON_KEY),
     hasFirecrawl: Boolean(import.meta.env.FIRECRAWL_API_KEY),
     hasAssemblyAI: Boolean(import.meta.env.ASSEMBLYAI_API_KEY),
+    hasYoutubeCookies: Boolean(import.meta.env.YT_COOKIES),
   };
 
   return Response.json({ ok: true, env });
