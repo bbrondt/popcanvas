@@ -32,7 +32,7 @@ export function UrlNode({ id, data, selected }: NodeProps) {
             value={draftUrl}
             onChange={(e) => setDraftUrl(e.target.value)}
             placeholder="https://…"
-            className="w-full bg-ink-900 border border-ink-600 px-2 py-1.5 text-xs font-mono text-bone-100 focus:border-ember outline-none rounded-sm"
+            className="nodrag w-full bg-ink-900 border border-ink-600 px-2 py-1.5 text-xs font-mono text-bone-100 focus:border-ember outline-none rounded-sm"
           />
           <ExtractButton onClick={handleExtract} disabled={d.status === 'pending' || !draftUrl} />
           {d.status === 'error' && (

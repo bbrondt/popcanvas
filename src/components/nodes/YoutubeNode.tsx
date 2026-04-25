@@ -40,7 +40,7 @@ export function YoutubeNode({ id, data, selected }: NodeProps) {
             value={draftUrl}
             onChange={(e) => setDraftUrl(e.target.value)}
             placeholder="https://youtube.com/watch?v=…"
-            className="w-full bg-ink-900 border border-ink-600 px-2 py-1.5 text-xs font-mono text-bone-100 focus:border-ember outline-none rounded-sm"
+            className="nodrag w-full bg-ink-900 border border-ink-600 px-2 py-1.5 text-xs font-mono text-bone-100 focus:border-ember outline-none rounded-sm"
           />
           {d.status !== 'error' && (
             <p className="mt-1.5 text-[10px] font-mono text-bone-400 leading-snug">

@@ -4,8 +4,12 @@ import type { Node, Edge } from '@xyflow/react';
  * Source node types. Each one represents a different way to pull
  * content into the canvas. The chat node is the consumer that pulls
  * everything connected to it into Claude's context.
+ *
+ * The artifact node is also a consumer — like chat, but optimized for
+ * one-shot generation of long-form deliverables (scripts, lead magnets,
+ * ad copy) using a template.
  */
-export type NodeKind = 'youtube' | 'pdf' | 'url' | 'image' | 'text' | 'chat';
+export type NodeKind = 'youtube' | 'pdf' | 'url' | 'image' | 'text' | 'chat' | 'artifact';
 
 /**
  * Extraction status lives on the node itself so the UI can render
@@ -69,6 +73,27 @@ export interface ChatNodeData extends BaseNodeData {
   isStreaming?: boolean;
 }
 
+export type ArtifactTemplateId =
+  | 'video-script'
+  | 'youtube-script'
+  | 'lead-magnet'
+  | 'ad-copy'
+  | 'tweet-thread'
+  | 'blog-post'
+  | 'email-sequence'
+  | 'linkedin-post'
+  | 'custom';
+
+export interface ArtifactNodeData extends BaseNodeData {
+  kind: 'artifact';
+  template: ArtifactTemplateId;
+  /** Used when template === 'custom'. Free-form instructions to Claude. */
+  customInstructions?: string;
+  /** Generated long-form output. Editable by the user after generation. */
+  output?: string;
+  isGenerating?: boolean;
+}
+
 export type SourceNodeData =
   | YoutubeNodeData
   | PdfNodeData
@@ -76,7 +101,7 @@ export type SourceNodeData =
   | ImageNodeData
   | TextNodeData;
 
-export type CanvasNodeData = SourceNodeData | ChatNodeData;
+export type CanvasNodeData = SourceNodeData | ChatNodeData | ArtifactNodeData;
 
 export type CanvasNode = Node<CanvasNodeData>;
 export type CanvasEdge = Edge;
@@ -110,4 +135,5 @@ export const NODE_WIDTH = {
   image: 240,
   text: 280,
   chat: 420,
+  artifact: 480,
 } as const satisfies Record<NodeKind, number>;

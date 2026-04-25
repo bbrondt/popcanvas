@@ -211,6 +211,9 @@ export function ChatNode({ id, data, selected }: NodeProps) {
       />
 
       <div className="border-t border-ink-600 pt-2">
+        {connectedSources.length > 0 && !isStreaming && (
+          <QuickActions onPick={(prompt) => setDraft(prompt)} disabled={isStreaming} />
+        )}
         <textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
@@ -218,7 +221,7 @@ export function ChatNode({ id, data, selected }: NodeProps) {
           placeholder="Ask something about your sources…"
           rows={2}
           disabled={isStreaming}
-          className="w-full bg-ink-900 border border-ink-600 px-2 py-1.5 text-xs font-mono text-bone-100 focus:border-ember outline-none rounded-sm resize-none"
+          className="nodrag w-full bg-ink-900 border border-ink-600 px-2 py-1.5 text-xs font-mono text-bone-100 focus:border-ember outline-none rounded-sm resize-none"
         />
         <div className="flex items-center justify-between mt-2">
           <span className="node-label opacity-60">⌘↵ to send</span>
@@ -294,6 +297,32 @@ function Message({ message }: { message: ChatMessage }) {
     <div className={`text-[12px] ${isUser ? 'text-bone-200' : 'text-bone-50'}`}>
       <div className="node-label mb-1">{isUser ? '› you' : '⌘ claude'}</div>
       <div className="font-sans leading-relaxed whitespace-pre-wrap">{message.content}</div>
+    </div>
+  );
+}
+
+const QUICK_PROMPTS: { label: string; prompt: string }[] = [
+  { label: 'summarize', prompt: 'Give me a concise summary of the connected sources, highlighting the most important points.' },
+  { label: 'takeaways', prompt: 'List the 5 most important takeaways from the connected sources, each as a single clear sentence.' },
+  { label: 'angles', prompt: 'Brainstorm 10 distinct content angles I could use for marketing material based on the connected sources. For each, give a one-line description and the audience it would best serve.' },
+  { label: 'questions', prompt: "What follow-up questions should I be asking based on these sources? List 5–10 questions that would deepen my understanding or surface what's missing." },
+  { label: 'quotes', prompt: 'Pull the 5 most quotable lines or statistics from the connected sources. For each, include the source it came from.' },
+];
+
+function QuickActions({ onPick, disabled }: { onPick: (p: string) => void; disabled: boolean }) {
+  return (
+    <div className="flex flex-wrap gap-1 mb-2">
+      {QUICK_PROMPTS.map((q) => (
+        <button
+          key={q.label}
+          onClick={() => onPick(q.prompt)}
+          disabled={disabled}
+          className="pill-btn text-[10px] py-1 px-2"
+          title={q.prompt}
+        >
+          {q.label}
+        </button>
+      ))}
     </div>
   );
 }

@@ -8,6 +8,10 @@ export interface StreamChatArgs {
   systemPrompt: string;
   messages: { role: 'user' | 'assistant'; content: string }[];
   onText: (chunk: string) => void;
+  /** Override default max_tokens. Long-form artifacts need more headroom. */
+  maxTokens?: number;
+  /** Override the default model. */
+  model?: string;
 }
 
 /**
@@ -24,11 +28,13 @@ export async function streamChat({
   systemPrompt,
   messages,
   onText,
+  maxTokens = 4096,
+  model = 'claude-sonnet-4-6',
 }: StreamChatArgs): Promise<string> {
   const stream = client.messages
     .stream({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 4096,
+      model,
+      max_tokens: maxTokens,
       system: systemPrompt,
       messages,
     })
