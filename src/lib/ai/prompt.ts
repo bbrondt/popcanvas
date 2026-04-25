@@ -1,4 +1,4 @@
-import type { CanvasNode, CanvasEdge, ChatNodeData, SourceNodeData } from '../types';
+import type { CanvasNode, CanvasEdge, SourceNodeData } from '../types';
 
 /**
  * Find every node that feeds into the given chat node.
@@ -64,12 +64,13 @@ If the user asks for something that the sources don't cover, answer using your o
 }
 
 /**
- * Convert the chat node's message history into the format Claude's API expects.
+ * Convert chat history + a new user turn into the format Claude's API expects.
+ * The history must already be in alternating user/assistant order; we just
+ * append the new user message at the end.
  */
 export function buildMessages(
-  chatNode: ChatNodeData,
+  history: { role: 'user' | 'assistant'; content: string }[],
   newUserMessage: string,
 ): { role: 'user' | 'assistant'; content: string }[] {
-  const history = chatNode.messages.map((m) => ({ role: m.role, content: m.content }));
   return [...history, { role: 'user' as const, content: newUserMessage }];
 }

@@ -85,11 +85,16 @@ export type CanvasEdge = Edge;
  * The shape sent to the /api/chat endpoint. The server walks the edges
  * to figure out which sources to inline, so we only need to pass the
  * chat node id and the full canvas state.
+ *
+ * `history` is the message log *before* this new user message — passed
+ * explicitly so the server doesn't have to read it back out of the
+ * chatNode data (which the client may have just mutated).
  */
 export interface ChatRequest {
   canvasId: string;
   chatNodeId: string;
   userMessage: string;
+  history: { role: 'user' | 'assistant'; content: string }[];
   /** Pass a snapshot so we don't have to round-trip through Supabase. */
   nodes: CanvasNode[];
   edges: CanvasEdge[];
