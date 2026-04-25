@@ -1,82 +1,146 @@
 import { YoutubeTranscript } from 'youtube-transcript';
+import ytdl from '@distube/ytdl-core';
+import { AssemblyAI } from 'assemblyai';
 import type { ExtractionResult } from './index';
+import { parseVideoId } from './youtube-shared';
 
-const VIDEO_ID_RE = /(?:youtube\.com\/(?:[^/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?/\s]{11})/;
+export { parseVideoId };
 
-export function parseVideoId(url: string): string | null {
-  const m = url.match(VIDEO_ID_RE);
-  return m ? m[1] : null;
-}
-
+/**
+ * Two-tier extraction:
+ *   1. Try YouTube's own captions via youtube-transcript (free, instant).
+ *   2. If captions are missing/disabled and ASSEMBLYAI_API_KEY is present,
+ *      stream the audio with @distube/ytdl-core, hand it to AssemblyAI for
+ *      ASR, and return that. ~30–90s, costs roughly $0.006/min.
+ *
+ * Title comes from oEmbed regardless of which path produced the transcript.
+ */
 export async function extractYoutube({ url }: { url: string }): Promise<ExtractionResult> {
   const videoId = parseVideoId(url);
   if (!videoId) {
     throw new Error('Could not parse a video ID from that URL.');
   }
 
-  // youtube-transcript returns an array of { text, duration, offset } chunks.
-  // Errors from the package are prefixed `[YoutubeTranscript] 🚨 ` — strip that
-  // so the node UI shows a clean human message.
-  let segments: Awaited<ReturnType<typeof YoutubeTranscript.fetchTranscript>>;
+  const title = await fetchTitle(url, videoId);
+
+  const captions = await tryYoutubeCaptions(videoId);
+  if (captions) {
+    return {
+      title,
+      content: captions.transcript,
+      meta: {
+        videoId,
+        thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+        source: 'youtube-captions',
+        segmentCount: captions.segmentCount,
+      },
+    };
+  }
+
+  const apiKey = import.meta.env.ASSEMBLYAI_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      `This video doesn't have a readable YouTube transcript, and no AssemblyAI fallback is configured. Set ASSEMBLYAI_API_KEY to transcribe audio for any video.`,
+    );
+  }
+
+  return await transcribeWithAssemblyAI({ videoId, url, title, apiKey });
+}
+
+interface CaptionsResult {
+  transcript: string;
+  segmentCount: number;
+}
+
+async function tryYoutubeCaptions(videoId: string): Promise<CaptionsResult | null> {
   try {
-    segments = await YoutubeTranscript.fetchTranscript(videoId);
+    const segments = await YoutubeTranscript.fetchTranscript(videoId);
+    if (!segments.length) return null;
+    const transcript = segments.map((s) => s.text).join(' ').replace(/\s+/g, ' ').trim();
+    return { transcript, segmentCount: segments.length };
   } catch (err) {
     const raw = err instanceof Error ? err.message : String(err);
-    const cleaned = raw.replace(/^\[YoutubeTranscript\]\s*🚨?\s*/u, '').trim();
-    throw new Error(friendlyYoutubeError(cleaned, videoId));
+    console.warn('[youtube] captions path failed, will try ASR fallback if configured:', raw);
+    return null;
   }
-  if (!segments.length) {
-    throw new Error(friendlyYoutubeError('No transcript available for this video.', videoId));
-  }
+}
 
-  const transcript = segments.map((s) => s.text).join(' ').replace(/\s+/g, ' ').trim();
-
-  // We can't get the title from youtube-transcript alone. For a real build,
-  // hit the oEmbed endpoint: https://www.youtube.com/oembed?url=...&format=json
-  // For the scaffold, we fetch oEmbed inline.
-  let title = `YouTube video ${videoId}`;
+async function fetchTitle(url: string, videoId: string): Promise<string> {
   try {
-    const oembed = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`);
+    const oembed = await fetch(
+      `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`,
+    );
     if (oembed.ok) {
       const data = (await oembed.json()) as { title?: string };
-      if (data.title) title = data.title;
+      if (data.title) return data.title;
     }
   } catch {
-    // Non-fatal. Keep the placeholder title.
+    // non-fatal
+  }
+  return `YouTube video ${videoId}`;
+}
+
+async function transcribeWithAssemblyAI(args: {
+  videoId: string;
+  url: string;
+  title: string;
+  apiKey: string;
+}): Promise<ExtractionResult> {
+  const client = new AssemblyAI({ apiKey: args.apiKey });
+
+  // Pull audio-only stream from YouTube into memory. For long videos this
+  // could be tens of MB; that's fine within Vercel's 1024MB function memory.
+  // We pick lowest-bitrate audio because ASR doesn't need fidelity.
+  const audioBuffer = await downloadAudio(args.url);
+
+  // AssemblyAI SDK uploads + polls for completion in one call.
+  const transcript = await client.transcripts.transcribe({
+    audio: audioBuffer,
+    speech_model: 'universal',
+  });
+
+  if (transcript.status === 'error') {
+    throw new Error(`AssemblyAI: ${transcript.error ?? 'transcription failed'}`);
+  }
+  if (!transcript.text || !transcript.text.trim()) {
+    throw new Error('AssemblyAI returned an empty transcript.');
   }
 
   return {
-    title,
-    content: transcript,
+    title: args.title,
+    content: transcript.text.trim(),
     meta: {
-      videoId,
-      thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
-      segmentCount: segments.length,
+      videoId: args.videoId,
+      thumbnail: `https://i.ytimg.com/vi/${args.videoId}/hqdefault.jpg`,
+      source: 'assemblyai',
+      audioDuration: transcript.audio_duration,
+      assemblyaiId: transcript.id,
     },
   };
 }
 
-/**
- * Most YouTube extraction failures come from the same root cause: the uploader
- * disabled captions, or this is a video type (Shorts, livestreams, music
- * videos) where YouTube doesn't auto-generate them. Surface that plainly so
- * the user knows to try a different video instead of debugging.
- */
-function friendlyYoutubeError(reason: string, videoId: string): string {
-  const lower = reason.toLowerCase();
-  const isCaptionIssue =
-    lower.includes('disabled') ||
-    lower.includes('no transcript') ||
-    lower.includes('not available') ||
-    lower.includes('captions');
-  if (isCaptionIssue) {
-    return `This YouTube video (${videoId}) doesn't have a readable transcript — captions are either disabled or this video type doesn't get them. Try a video where the CC button works on YouTube (TED Talks, conference talks, podcasts, most educational channels).`;
+async function downloadAudio(url: string): Promise<Buffer> {
+  // ytdl emits Buffer chunks; we collect them. If YouTube serves a bot-check
+  // page from a datacenter IP, ytdl throws with a recognizable message — we
+  // re-throw with a clearer one.
+  try {
+    const stream = ytdl(url, {
+      filter: 'audioonly',
+      quality: 'lowestaudio',
+      highWaterMark: 1 << 25, // 32MB internal buffer to ride out YT throttling
+    });
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream as AsyncIterable<Buffer>) {
+      chunks.push(chunk);
+    }
+    return Buffer.concat(chunks);
+  } catch (err) {
+    const raw = err instanceof Error ? err.message : String(err);
+    if (raw.includes('Sign in') || raw.includes('confirm') || raw.includes('bot')) {
+      throw new Error(
+        `YouTube is challenging this request as a bot. Try again in a minute, or configure ytdl cookies if it persists.`,
+      );
+    }
+    throw new Error(`Could not download audio from YouTube: ${raw}`);
   }
-  if (lower.includes('captcha') || lower.includes('too many requests')) {
-    return `YouTube is rate-limiting transcript fetches from this server. Wait a few minutes and try again, or use a different video.`;
-  }
-  if (lower.includes('no longer available') || lower.includes('unavailable')) {
-    return `This video isn't available (private, deleted, or region-locked).`;
-  }
-  return reason;
 }
