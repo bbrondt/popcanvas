@@ -1,4 +1,8 @@
 ---
-// Skip the canvas list for the learning scaffold; redirect to a fixed demo canvas.
-return Astro.redirect('/c/00000000-0000-0000-0000-000000000010');
+import Base from '@/layouts/Base.astro';
+import { CanvasList } from '@/components/canvas/CanvasList';
 ---
+
+<Base title="popcanvas">
+  <CanvasList client:only="react" />
+</Base>

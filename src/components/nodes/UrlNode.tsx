@@ -15,7 +15,7 @@ export function UrlNode({ id, data, selected }: NodeProps) {
   };
 
   return (
-    <NodeShell selected={!!selected} width={NODE_WIDTH.url} status={d.status}>
+    <NodeShell id={id} selected={!!selected} width={NODE_WIDTH.url} status={d.status}>
       <div className="flex items-center justify-between mb-2">
         <span className="node-label">↗ url</span>
         <StatusPill status={d.status} />

@@ -77,6 +77,23 @@ export const PUT: APIRoute = async ({ params, request }) => {
   }
 };
 
+export const DELETE: APIRoute = async ({ params }) => {
+  try {
+    const id = params.id;
+    if (!id) return new Response('Missing id', { status: 400 });
+
+    const supabase = getServiceClient();
+    const { error } = await supabase.from('canvases').delete().eq('id', id);
+    if (error) {
+      console.error('[canvas:DELETE] supabase error:', error.message, error);
+      return Response.json({ error: error.message }, { status: 500 });
+    }
+    return Response.json({ ok: true });
+  } catch (err) {
+    return logAndFail('canvas:DELETE', err);
+  }
+};
+
 function logAndFail(scope: string, err: unknown): Response {
   const e = err instanceof Error ? err : new Error(String(err));
   console.error(`[${scope}] handler failed:`, e.message, '\n', e.stack);

@@ -17,7 +17,7 @@ export function PdfNode({ id, data, selected }: NodeProps) {
   };
 
   return (
-    <NodeShell selected={!!selected} width={NODE_WIDTH.pdf} status={d.status}>
+    <NodeShell id={id} selected={!!selected} width={NODE_WIDTH.pdf} status={d.status}>
       <div className="flex items-center justify-between mb-2">
         <span className="node-label">⌹ pdf</span>
         <StatusPill status={d.status} />

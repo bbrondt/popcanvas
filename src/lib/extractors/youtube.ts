@@ -7,13 +7,20 @@ import { parseVideoId } from './youtube-shared';
 export { parseVideoId };
 
 /**
- * Two-tier extraction:
- *   1. Try YouTube's own captions via youtube-transcript (free, instant).
- *   2. If captions are missing/disabled and ASSEMBLYAI_API_KEY is present,
- *      stream the audio with @distube/ytdl-core, hand it to AssemblyAI for
- *      ASR, and return that. ~30–90s, costs roughly $0.006/min.
+ * Three-tier extraction. Each tier is tried in order until one returns text:
  *
- * Title comes from oEmbed regardless of which path produced the transcript.
+ *   1. youtube-transcript via InnerTube. Free, instant, but only works when
+ *      the uploader left captions on.
+ *
+ *   2. ytdl-core audio download + AssemblyAI ASR. Works for any video that
+ *      ytdl can fetch — but YouTube blocks unauthenticated datacenter IPs
+ *      with a "Sign in" page. Set YT_COOKIES to bypass. ~30–90s, $0.006/min.
+ *
+ *   3. Supadata.ai (or any compatible service exposing a YouTube transcript
+ *      API). Fully managed; they handle bot detection on their end. Last
+ *      resort because it's a paid third-party. Set SUPADATA_API_KEY to use.
+ *
+ * Title comes from oEmbed regardless of which tier produced the transcript.
  */
 export async function extractYoutube({ url }: { url: string }): Promise<ExtractionResult> {
   const videoId = parseVideoId(url);
@@ -22,29 +29,55 @@ export async function extractYoutube({ url }: { url: string }): Promise<Extracti
   }
 
   const title = await fetchTitle(url, videoId);
+  const baseMeta = {
+    videoId,
+    thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+  };
 
   const captions = await tryYoutubeCaptions(videoId);
   if (captions) {
     return {
       title,
       content: captions.transcript,
-      meta: {
-        videoId,
-        thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
-        source: 'youtube-captions',
-        segmentCount: captions.segmentCount,
-      },
+      meta: { ...baseMeta, source: 'youtube-captions', segmentCount: captions.segmentCount },
     };
   }
 
-  const apiKey = import.meta.env.ASSEMBLYAI_API_KEY;
-  if (!apiKey) {
-    throw new Error(
-      `This video doesn't have a readable YouTube transcript, and no AssemblyAI fallback is configured. Set ASSEMBLYAI_API_KEY to transcribe audio for any video.`,
-    );
+  const errors: string[] = [];
+
+  const assemblyKey = import.meta.env.ASSEMBLYAI_API_KEY;
+  if (assemblyKey) {
+    try {
+      return await transcribeWithAssemblyAI({ videoId, url, title, apiKey: assemblyKey });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn('[youtube] AssemblyAI tier failed, will try Supadata if configured:', msg);
+      errors.push(`AssemblyAI: ${msg}`);
+    }
   }
 
-  return await transcribeWithAssemblyAI({ videoId, url, title, apiKey });
+  const supadataKey = import.meta.env.SUPADATA_API_KEY;
+  if (supadataKey) {
+    try {
+      const transcript = await transcribeWithSupadata({ url, apiKey: supadataKey });
+      return {
+        title,
+        content: transcript,
+        meta: { ...baseMeta, source: 'supadata' },
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn('[youtube] Supadata tier failed:', msg);
+      errors.push(`Supadata: ${msg}`);
+    }
+  }
+
+  if (errors.length === 0) {
+    throw new Error(
+      `This video has no readable YouTube transcript and no fallback is configured. Set ASSEMBLYAI_API_KEY (with YT_COOKIES) or SUPADATA_API_KEY to transcribe any video.`,
+    );
+  }
+  throw new Error(`All transcript tiers failed: ${errors.join(' · ')}`);
 }
 
 interface CaptionsResult {
@@ -117,6 +150,33 @@ async function transcribeWithAssemblyAI(args: {
       assemblyaiId: transcript.id,
     },
   };
+}
+
+/**
+ * Supadata.ai exposes a hosted YouTube transcript API at
+ *   GET https://api.supadata.ai/v1/youtube/transcript?url=<url>&text=true
+ *   header: x-api-key: <key>
+ * Response shape: { content: string, lang?: string, ... } on success.
+ *
+ * If you swap to a different provider (SearchAPI, Apify, etc.), replace the
+ * URL/header here — the rest of the pipeline doesn't care.
+ */
+async function transcribeWithSupadata(args: { url: string; apiKey: string }): Promise<string> {
+  const endpoint = new URL('https://api.supadata.ai/v1/youtube/transcript');
+  endpoint.searchParams.set('url', args.url);
+  endpoint.searchParams.set('text', 'true');
+
+  const res = await fetch(endpoint, {
+    headers: { 'x-api-key': args.apiKey },
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Supadata returned ${res.status}: ${body.slice(0, 200)}`);
+  }
+  const data = (await res.json()) as { content?: string; text?: string };
+  const text = (data.content ?? data.text ?? '').trim();
+  if (!text) throw new Error('Supadata returned an empty transcript.');
+  return text;
 }
 
 async function downloadAudio(url: string): Promise<Buffer> {

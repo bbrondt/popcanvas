@@ -18,6 +18,7 @@ import {
 import '@xyflow/react/dist/style.css';
 
 import { Toolbar } from './Toolbar';
+import { CustomEdge } from './CustomEdge';
 import { YoutubeNode } from '../nodes/YoutubeNode';
 import { PdfNode } from '../nodes/PdfNode';
 import { UrlNode } from '../nodes/UrlNode';
@@ -33,6 +34,8 @@ const nodeTypes = {
   text: TextNode,
   chat: ChatNode,
 };
+
+const edgeTypes = { default: CustomEdge };
 
 interface CanvasProps {
   canvasId: string;
@@ -136,13 +139,14 @@ function CanvasInner({ canvasId }: CanvasProps) {
 
   return (
     <div className="relative w-screen h-screen canvas-grid">
-      <TitleBar title={title} onTitleChange={setTitle} />
+      <TitleBar title={title} onTitleChange={setTitle} canvasId={canvasId} />
       <Toolbar />
 
       <ReactFlow
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
@@ -150,6 +154,7 @@ function CanvasInner({ canvasId }: CanvasProps) {
         fitViewOptions={{ padding: 0.4, maxZoom: 1, minZoom: 0.6 }}
         proOptions={{ hideAttribution: false }}
         defaultEdgeOptions={{ animated: true }}
+        deleteKeyCode={['Backspace', 'Delete']}
       >
         <Background variant={BackgroundVariant.Dots} gap={32} size={1} color="rgba(245,241,232,0.06)" />
         <Controls position="bottom-right" showInteractive={false} />
@@ -184,11 +189,37 @@ function EmptyHint({ hasSources }: { hasSources: boolean }) {
   );
 }
 
-function TitleBar({ title, onTitleChange }: { title: string; onTitleChange: (t: string) => void }) {
+function TitleBar({
+  title,
+  onTitleChange,
+  canvasId,
+}: {
+  title: string;
+  onTitleChange: (t: string) => void;
+  canvasId: string;
+}) {
+  const deleteCanvas = async () => {
+    if (!confirm(`Delete "${title}"? This can't be undone.`)) return;
+    try {
+      const res = await fetch(`/api/canvas/${canvasId}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(await res.text());
+      window.location.href = '/';
+    } catch (err) {
+      console.error(err);
+      alert('Could not delete canvas.');
+    }
+  };
+
   return (
     <div className="fixed top-0 left-0 right-0 z-40 px-6 py-4 flex items-center justify-between pointer-events-none">
       <div className="pointer-events-auto flex items-baseline gap-3">
-        <span className="font-display text-bone-50 text-lg tracking-tight">popcanvas</span>
+        <a
+          href="/"
+          className="font-display text-bone-50 text-lg tracking-tight hover:text-ember transition-colors"
+          title="Back to canvases"
+        >
+          popcanvas
+        </a>
         <span className="node-label opacity-60">/</span>
         <input
           value={title}
@@ -197,8 +228,15 @@ function TitleBar({ title, onTitleChange }: { title: string; onTitleChange: (t: 
           className="bg-transparent border-b border-transparent hover:border-ink-600 focus:border-ember outline-none font-display text-bone-200 text-base tracking-tight w-64 transition-colors"
         />
       </div>
-      <div className="pointer-events-auto node-label opacity-60">
-        autosaved · ⌘+Enter in chat sends
+      <div className="pointer-events-auto flex items-center gap-4">
+        <span className="node-label opacity-60">autosaved · ⌘+Enter sends · ⌫ removes</span>
+        <button
+          onClick={deleteCanvas}
+          className="pill-btn text-bone-300 hover:text-red-400 hover:border-red-400"
+          title="Delete this canvas"
+        >
+          delete canvas
+        </button>
       </div>
     </div>
   );

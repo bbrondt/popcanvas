@@ -139,6 +139,7 @@ export function ChatNode({ id, data, selected }: NodeProps) {
 
   return (
     <NodeShell
+      id={id}
       selected={!!selected}
       width={NODE_WIDTH.chat}
       inputHandle
