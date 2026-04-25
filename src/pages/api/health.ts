@@ -17,6 +17,7 @@ export const GET: APIRoute = async () => {
       Boolean(import.meta.env.SUPABASE_SERVICE_ROLE_KEY),
     hasSupabaseAnon: Boolean(import.meta.env.PUBLIC_SUPABASE_ANON_KEY),
     hasFirecrawl: Boolean(import.meta.env.FIRECRAWL_API_KEY),
+    hasAssemblyAI: Boolean(import.meta.env.ASSEMBLYAI_API_KEY),
   };
 
   return Response.json({ ok: true, env });

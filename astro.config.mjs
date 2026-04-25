@@ -6,8 +6,10 @@ import vercel from '@astrojs/vercel';
 export default defineConfig({
   output: 'server',
   adapter: vercel({
-    // Streaming chat needs more than the default 10s
-    maxDuration: 60,
+    // Streaming chat + AssemblyAI ASR fallback for YouTube can both push
+    // beyond a minute. 300 is the Vercel Pro maximum; on Hobby this caps at
+    // the plan's 60s limit automatically.
+    maxDuration: 300,
   }),
   integrations: [react(), tailwind({ applyBaseStyles: false })],
   vite: {
@@ -16,9 +18,11 @@ export default defineConfig({
       // CJS file, which Node refuses to load. Bundling via Vite picks up the
       // `module` field (the ESM dist) instead.
       noExternal: ['@xyflow/react', 'youtube-transcript'],
-      // pdf-parse is CJS and historically misbehaves under bundlers; let Node
-      // require() it directly at runtime via Vercel's NFT.
-      external: ['pdf-parse'],
+      // pdf-parse and @distube/ytdl-core are both CJS and ship with code that
+      // misbehaves under bundlers (pdf-parse's debug-mode test PDF read,
+      // ytdl-core's dynamic requires). Let Node require() them at runtime via
+      // Vercel's NFT trace.
+      external: ['pdf-parse', '@distube/ytdl-core'],
     },
   },
 });

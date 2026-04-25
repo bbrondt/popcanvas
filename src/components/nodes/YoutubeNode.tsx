@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useReactFlow, type NodeProps } from '@xyflow/react';
 import { NodeShell, StatusPill, ExtractButton } from './NodeShell';
-import { parseVideoId } from '@/lib/extractors/youtube';
+import { parseVideoId } from '@/lib/extractors/youtube-shared';
 import type { YoutubeNodeData } from '@/lib/types';
 import { NODE_WIDTH } from '@/lib/types';
 import { extractNode } from './extractHelpers';
@@ -44,7 +44,7 @@ export function YoutubeNode({ id, data, selected }: NodeProps) {
           />
           {d.status !== 'error' && (
             <p className="mt-1.5 text-[10px] font-mono text-bone-400 leading-snug">
-              Needs captions enabled. TED Talks, podcasts, and most educational channels work.
+              Uses YouTube captions when available, otherwise transcribes audio. Long videos can take a minute.
             </p>
           )}
           <ExtractButton onClick={handleExtract} disabled={d.status === 'pending' || !draftUrl} />
