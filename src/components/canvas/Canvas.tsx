@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useState, useRef } from 'react';
+import { useCallback, useEffect, useState, useRef, useMemo } from 'react';
 import {
   ReactFlow,
   ReactFlowProvider,
   Controls,
-  MiniMap,
   Background,
   BackgroundVariant,
   addEdge,
@@ -38,6 +37,21 @@ interface CanvasProps {
   canvasId: string;
 }
 
+// First-run scaffold: a chat node positioned to the right of where the toolbar
+// sits, so the user opens the canvas and immediately sees what the consumer of
+// their sources looks like. They still have to add sources from the toolbar
+// and draw a connection — the empty-state hint guides that.
+function seedNodes(): Node[] {
+  return [
+    {
+      id: 'chat-seed',
+      type: 'chat',
+      position: { x: 520, y: 180 },
+      data: { kind: 'chat', status: 'idle', messages: [] },
+    },
+  ];
+}
+
 function CanvasInner({ canvasId }: CanvasProps) {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
@@ -52,12 +66,16 @@ function CanvasInner({ canvasId }: CanvasProps) {
         const res = await fetch(`/api/canvas/${canvasId}`);
         if (res.ok) {
           const data = await res.json();
-          setNodes(data.nodes ?? []);
+          const loadedNodes = (data.nodes ?? []) as Node[];
+          setNodes(loadedNodes.length > 0 ? loadedNodes : seedNodes());
           setEdges(data.edges ?? []);
           setTitle(data.title ?? 'Untitled canvas');
+        } else {
+          // Brand new canvas (404 or error): seed it.
+          setNodes(seedNodes());
         }
       } catch {
-        // Silent: canvas might not exist yet
+        setNodes(seedNodes());
       } finally {
         setLoaded(true);
       }
@@ -93,6 +111,11 @@ function CanvasInner({ canvasId }: CanvasProps) {
     [],
   );
 
+  const showEmptyHint = useMemo(
+    () => loaded && edges.length === 0,
+    [loaded, edges.length],
+  );
+
   return (
     <div className="relative w-screen h-screen canvas-grid">
       <TitleBar title={title} onTitleChange={setTitle} />
@@ -106,18 +129,39 @@ function CanvasInner({ canvasId }: CanvasProps) {
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
         fitView
+        fitViewOptions={{ padding: 0.4, maxZoom: 1, minZoom: 0.6 }}
         proOptions={{ hideAttribution: false }}
         defaultEdgeOptions={{ animated: true }}
       >
         <Background variant={BackgroundVariant.Dots} gap={32} size={1} color="rgba(245,241,232,0.06)" />
-        <Controls position="bottom-right" />
-        <MiniMap
-          position="top-right"
-          nodeColor={() => '#ff5c2b'}
-          maskColor="rgba(10,9,8,0.85)"
-          style={{ width: 160, height: 100 }}
-        />
+        <Controls position="bottom-right" showInteractive={false} />
       </ReactFlow>
+
+      {showEmptyHint && <EmptyHint hasSources={nodes.some((n) => n.data?.kind && n.data.kind !== 'chat')} />}
+    </div>
+  );
+}
+
+function EmptyHint({ hasSources }: { hasSources: boolean }) {
+  return (
+    <div className="pointer-events-none fixed inset-x-0 top-24 z-30 flex justify-center">
+      <div className="node-frame px-5 py-3 max-w-md text-center bg-ink-800/90 backdrop-blur">
+        <div className="node-label mb-1.5 text-ember">how this works</div>
+        <div className="font-sans text-sm text-bone-100 leading-relaxed">
+          {hasSources ? (
+            <>
+              Drag from the <span className="text-ember">●</span> on the right of a source
+              to the <span className="text-ember">●</span> on the left of the chat node, then
+              ask a question.
+            </>
+          ) : (
+            <>
+              Pick a source from the <span className="text-ember">left toolbar</span>,
+              connect it to the chat, and ask Claude anything about it.
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -131,7 +175,8 @@ function TitleBar({ title, onTitleChange }: { title: string; onTitleChange: (t: 
         <input
           value={title}
           onChange={(e) => onTitleChange(e.target.value)}
-          className="bg-transparent border-none outline-none font-display text-bone-200 text-base tracking-tight w-64"
+          spellCheck={false}
+          className="bg-transparent border-b border-transparent hover:border-ink-600 focus:border-ember outline-none font-display text-bone-200 text-base tracking-tight w-64 transition-colors"
         />
       </div>
       <div className="pointer-events-auto node-label opacity-60">
