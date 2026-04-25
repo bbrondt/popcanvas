@@ -12,9 +12,12 @@ export default defineConfig({
   integrations: [react(), tailwind({ applyBaseStyles: false })],
   vite: {
     ssr: {
-      // pdf-parse has a quirk where it tries to load test PDFs at module init
-      // unless we tell vite to externalize it.
-      noExternal: ['@xyflow/react'],
+      // youtube-transcript ships with "type":"module" but its `main` points to a
+      // CJS file, which Node refuses to load. Bundling via Vite picks up the
+      // `module` field (the ESM dist) instead.
+      noExternal: ['@xyflow/react', 'youtube-transcript'],
+      // pdf-parse is CJS and historically misbehaves under bundlers; let Node
+      // require() it directly at runtime via Vercel's NFT.
       external: ['pdf-parse'],
     },
   },

@@ -12,21 +12,21 @@ export const prerender = false;
  * For text + url + youtube nodes, the body is JSON: { kind, payload }.
  * For pdf + image nodes, the body is multipart form-data with a 'file' field.
  *
- * Caches results in source_extractions keyed by a hash of the payload, so
- * the same YouTube URL or file content extracted across multiple canvases
- * only hits the underlying service once.
+ * Caches results in source_extractions keyed by a hash of the payload, so the
+ * same YouTube URL or file content extracted across multiple canvases only
+ * hits the underlying service once. Cache reads/writes are fail-soft: if
+ * Supabase is unreachable we log a warning and run extraction anyway.
  */
 export const POST: APIRoute = async ({ request }) => {
   const contentType = request.headers.get('content-type') ?? '';
 
   try {
     if (contentType.includes('multipart/form-data')) {
-      return handleFileUpload(request);
+      return await handleFileUpload(request);
     }
-    return handleJson(request);
+    return await handleJson(request);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Unknown error';
-    return Response.json({ error: msg }, { status: 500 });
+    return logAndFail('extract', err);
   }
 };
 
@@ -70,13 +70,22 @@ function hashBuffer(buf: Buffer): string {
 }
 
 async function readCache(key: string): Promise<unknown | null> {
-  const supabase = getServiceClient();
-  const { data } = await supabase
-    .from('source_extractions')
-    .select('title, content, meta')
-    .eq('source_key', key)
-    .maybeSingle();
-  return data;
+  try {
+    const supabase = getServiceClient();
+    const { data, error } = await supabase
+      .from('source_extractions')
+      .select('title, content, meta')
+      .eq('source_key', key)
+      .maybeSingle();
+    if (error) {
+      console.warn('[extract] cache read error (continuing):', error.message);
+      return null;
+    }
+    return data;
+  } catch (err) {
+    console.warn('[extract] cache read threw (continuing):', err instanceof Error ? err.message : err);
+    return null;
+  }
 }
 
 async function writeCache(
@@ -84,17 +93,33 @@ async function writeCache(
   kind: NodeKind,
   result: { title: string; content: string; meta?: Record<string, unknown> },
 ): Promise<void> {
-  const supabase = getServiceClient();
-  await supabase
-    .from('source_extractions')
-    .upsert(
-      {
-        source_key: key,
-        source_type: kind,
-        title: result.title,
-        content: result.content,
-        meta: result.meta ?? {},
-      },
-      { onConflict: 'source_key' },
-    );
+  try {
+    const supabase = getServiceClient();
+    const { error } = await supabase
+      .from('source_extractions')
+      .upsert(
+        {
+          source_key: key,
+          source_type: kind,
+          title: result.title,
+          content: result.content,
+          meta: result.meta ?? {},
+        },
+        { onConflict: 'source_key' },
+      );
+    if (error) {
+      console.warn('[extract] cache write error (non-fatal):', error.message);
+    }
+  } catch (err) {
+    console.warn('[extract] cache write threw (non-fatal):', err instanceof Error ? err.message : err);
+  }
+}
+
+function logAndFail(scope: string, err: unknown): Response {
+  const e = err instanceof Error ? err : new Error(String(err));
+  console.error(`[${scope}] handler failed:`, e.message, '\n', e.stack);
+  return Response.json(
+    { error: e.message, scope },
+    { status: 500 },
+  );
 }

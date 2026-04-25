@@ -10,19 +10,32 @@ export const prerender = false;
  *
  * Body: ChatRequest { canvasId, chatNodeId, userMessage, nodes, edges }
  *
- * Streams Claude's reply back to the client as text/event-stream. Each
- * chunk is a JSON line: {"type":"text","text":"..."} or {"type":"done"}.
+ * Streams Claude's reply back to the client as text/event-stream. Each frame
+ * is a JSON line: {"type":"text","text":"..."} or {"type":"done"} or
+ * {"type":"error","error":"..."}.
  */
 export const POST: APIRoute = async ({ request }) => {
-  const body = (await request.json()) as ChatRequest;
+  let body: ChatRequest;
+  try {
+    body = (await request.json()) as ChatRequest;
+  } catch (err) {
+    return logAndFail('chat:parse', err);
+  }
+
   const chatNode = body.nodes.find((n) => n.id === body.chatNodeId);
   if (!chatNode || chatNode.data.kind !== 'chat') {
     return new Response('Chat node not found', { status: 400 });
   }
 
-  const sources = findConnectedSources(body.chatNodeId, body.nodes, body.edges);
-  const systemPrompt = buildSystemPrompt(sources);
-  const messages = buildMessages(chatNode.data as ChatNodeData, body.userMessage);
+  let systemPrompt: string;
+  let messages: ReturnType<typeof buildMessages>;
+  try {
+    const sources = findConnectedSources(body.chatNodeId, body.nodes, body.edges);
+    systemPrompt = buildSystemPrompt(sources);
+    messages = buildMessages(chatNode.data as ChatNodeData, body.userMessage);
+  } catch (err) {
+    return logAndFail('chat:prompt', err);
+  }
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -37,8 +50,11 @@ export const POST: APIRoute = async ({ request }) => {
         });
         controller.enqueue(enc.encode(`data: ${JSON.stringify({ type: 'done' })}\n\n`));
       } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Unknown error';
-        controller.enqueue(enc.encode(`data: ${JSON.stringify({ type: 'error', error: msg })}\n\n`));
+        const e = err instanceof Error ? err : new Error(String(err));
+        console.error('[chat:stream] failed:', e.message, '\n', e.stack);
+        controller.enqueue(
+          enc.encode(`data: ${JSON.stringify({ type: 'error', error: e.message })}\n\n`),
+        );
       } finally {
         controller.close();
       }
@@ -48,8 +64,16 @@ export const POST: APIRoute = async ({ request }) => {
   return new Response(stream, {
     headers: {
       'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
+      'Cache-Control': 'no-cache, no-transform',
       Connection: 'keep-alive',
+      // Disable proxy buffering on Vercel/Nginx so tokens flush as they arrive.
+      'X-Accel-Buffering': 'no',
     },
   });
 };
+
+function logAndFail(scope: string, err: unknown): Response {
+  const e = err instanceof Error ? err : new Error(String(err));
+  console.error(`[${scope}] handler failed:`, e.message, '\n', e.stack);
+  return Response.json({ error: e.message, scope }, { status: 500 });
+}
