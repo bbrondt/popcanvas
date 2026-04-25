@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro';
 import { findConnectedSources, buildSystemPrompt, buildMessages } from '@/lib/ai/prompt';
 import { streamChat } from '@/lib/ai/anthropic';
-import type { ChatRequest, ChatNodeData } from '@/lib/types';
+import type { ChatRequest } from '@/lib/types';
 
 export const prerender = false;
 
@@ -32,7 +32,23 @@ export const POST: APIRoute = async ({ request }) => {
   try {
     const sources = findConnectedSources(body.chatNodeId, body.nodes, body.edges);
     systemPrompt = buildSystemPrompt(sources);
-    messages = buildMessages(chatNode.data as ChatNodeData, body.userMessage);
+    // history is whatever messages existed *before* this new user turn.
+    // Falling back to chatNode.data.messages is safe for old clients but
+    // strips the trailing user message if present so we don't send it twice.
+    const explicitHistory = Array.isArray(body.history) ? body.history : null;
+    const fallbackHistory = (chatNode.data.messages ?? []).map((m) => ({
+      role: m.role,
+      content: m.content,
+    }));
+    let history = explicitHistory ?? fallbackHistory;
+    if (
+      history.length > 0 &&
+      history[history.length - 1].role === 'user' &&
+      history[history.length - 1].content === body.userMessage
+    ) {
+      history = history.slice(0, -1);
+    }
+    messages = buildMessages(history, body.userMessage);
   } catch (err) {
     return logAndFail('chat:prompt', err);
   }

@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useReactFlow, useStore, type NodeProps } from '@xyflow/react';
-import { NodeShell, StatusPill } from './NodeShell';
+import { NodeShell } from './NodeShell';
 import { nanoid } from 'nanoid';
 import { NODE_WIDTH, type ChatNodeData, type ChatMessage, type SourceNodeData } from '@/lib/types';
 
@@ -60,6 +60,9 @@ export function ChatNode({ id, data, selected }: NodeProps) {
           canvasId: 'demo',
           chatNodeId: id,
           userMessage: userMessageText,
+          // Pass the pre-mutation history so the server doesn't double-append
+          // the user message it sees in the just-updated chatNode.data.messages.
+          history: messages.map((m) => ({ role: m.role, content: m.content })),
           nodes: flow.getNodes(),
           edges: flow.getEdges(),
         }),
@@ -190,38 +193,22 @@ export function ChatNode({ id, data, selected }: NodeProps) {
     >
       <div className="flex items-center justify-between mb-2">
         <span className="node-label">⌘ chat</span>
-        <StatusPill status={isStreaming ? 'pending' : 'ready'} />
+        <span className={`node-label ${isStreaming ? 'text-ember' : 'text-moss'}`}>
+          {isStreaming ? 'thinking…' : 'ready'}
+        </span>
       </div>
 
       <ConnectedSources sources={connectedSources} />
 
-      <div className="max-h-80 overflow-y-auto space-y-3 mb-3 pr-1">
-        {messages.length === 0 && !streamingText && (
-          <div className="text-bone-400 font-mono text-[11px] py-4 text-center">
-            {connectedSources.length === 0
-              ? 'Connect sources, then ask a question.'
-              : 'Ask a question about your sources.'}
-            <br />
-            <span className="opacity-60">⌘ + Enter to send</span>
-          </div>
-        )}
-        {messages.map((m) => (
-          <Message key={m.id} message={m} />
-        ))}
-        {streamingText && (
-          <Message
-            message={{
-              id: 'streaming',
-              role: 'assistant',
-              content: streamingText,
-              createdAt: '',
-            }}
-          />
-        )}
-        {!isStreaming && d.error && (
-          <ChatError message={d.error} onDismiss={() => flow.updateNodeData(id, { ...d, error: undefined })} />
-        )}
-      </div>
+      <MessagesScroller
+        messages={messages}
+        streamingText={streamingText}
+        emptyHint={connectedSources.length === 0
+          ? 'Connect sources, then ask a question.'
+          : 'Ask a question about your sources.'}
+        error={!isStreaming ? d.error : undefined}
+        onDismissError={() => flow.updateNodeData(id, { ...d, error: undefined })}
+      />
 
       <div className="border-t border-ink-600 pt-2">
         <textarea
@@ -245,6 +232,59 @@ export function ChatNode({ id, data, selected }: NodeProps) {
         </div>
       </div>
     </NodeShell>
+  );
+}
+
+function MessagesScroller({
+  messages,
+  streamingText,
+  emptyHint,
+  error,
+  onDismissError,
+}: {
+  messages: ChatMessage[];
+  streamingText: string;
+  emptyHint: string;
+  error: string | undefined;
+  onDismissError: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  // Auto-scroll to the bottom whenever new content arrives. Otherwise long
+  // conversations and streaming responses get pushed below the visible area
+  // and the user thinks the chat froze.
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [messages.length, streamingText, error]);
+
+  return (
+    <div
+      ref={ref}
+      className="max-h-80 overflow-y-auto space-y-3 mb-3 pr-1 scroll-smooth"
+    >
+      {messages.length === 0 && !streamingText && (
+        <div className="text-bone-400 font-mono text-[11px] py-4 text-center">
+          {emptyHint}
+          <br />
+          <span className="opacity-60">⌘ + Enter to send</span>
+        </div>
+      )}
+      {messages.map((m) => (
+        <Message key={m.id} message={m} />
+      ))}
+      {streamingText && (
+        <Message
+          message={{
+            id: 'streaming',
+            role: 'assistant',
+            content: streamingText,
+            createdAt: '',
+          }}
+        />
+      )}
+      {error && <ChatError message={error} onDismiss={onDismissError} />}
+    </div>
   );
 }
 
