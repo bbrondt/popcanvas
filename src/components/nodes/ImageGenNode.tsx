@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useReactFlow, useStore, type NodeProps } from '@xyflow/react';
 import { NodeShell } from './NodeShell';
+import { slimNodesForApi } from '@/lib/slimPayload';
 import { NODE_WIDTH, type ImageGenNodeData, type ImageNodeData } from '@/lib/types';
 
 const ASPECTS: NonNullable<ImageGenNodeData['aspectRatio']>[] = ['1:1', '16:9', '9:16', '4:3', '3:4'];
@@ -60,7 +61,14 @@ export function ImageGenNode({ id, data, selected }: NodeProps) {
           imageGenNodeId: id,
           prompt: prompt.trim(),
           aspectRatio: aspect,
-          nodes: flow.getNodes(),
+          // References travel as their own array; the slim nodes carry
+          // text-shaped context only. Same reason as VideoGen — keeps
+          // the request body under Vercel's 4.5MB cap.
+          references: usableRefs.map((r) => ({
+            dataUrl: r.dataUrl as string,
+            label: r.title ?? 'reference',
+          })),
+          nodes: slimNodesForApi(flow.getNodes()),
           edges: flow.getEdges(),
         }),
       });

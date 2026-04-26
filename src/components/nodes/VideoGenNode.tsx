@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useReactFlow, useStore, type NodeProps } from '@xyflow/react';
 import { NodeShell } from './NodeShell';
+import { slimNodesForApi } from '@/lib/slimPayload';
 import {
   NODE_WIDTH,
   type ImageGenNodeData,
@@ -78,7 +79,11 @@ export function VideoGenNode({ id, data, selected }: NodeProps) {
           startingImageDataUrl,
           aspectRatio,
           durationSec,
-          nodes: flow.getNodes(),
+          // Slim before shipping — without this the upstream ImageGen
+          // output (~1–2MB base64) plus other media fields blow past
+          // Vercel's 4.5MB request body limit. The starting image
+          // rides separately above so we don't need it inside `nodes`.
+          nodes: slimNodesForApi(flow.getNodes()),
           edges: flow.getEdges(),
         }),
       });
