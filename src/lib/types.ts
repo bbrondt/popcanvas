@@ -130,6 +130,21 @@ export interface ImageGenNodeData extends BaseNodeData {
   isGenerating?: boolean;
 }
 
+/**
+ * Reference to the Veo-side source video used for native extension.
+ * Veo's API accepts a `video: { uri, mimeType }` argument and continues
+ * the prior clip's motion (vs. the image-to-video fallback which only
+ * preserves the still last-frame and resets motion). The Files API URI
+ * is only valid for ~2 days, hence `createdAt` so the client can tell
+ * when to stop offering native extension and fall back to last-frame.
+ */
+export interface VeoVideoRef {
+  uri: string;
+  mimeType: string;
+  /** ISO timestamp of when the source video was generated. */
+  createdAt: string;
+}
+
 export interface VideoGenNodeData extends BaseNodeData {
   kind: 'video-gen';
   /** Motion description. */
@@ -140,6 +155,10 @@ export interface VideoGenNodeData extends BaseNodeData {
   /** Storage path inside the canvas-uploads bucket. The durable identity
    *  of the video — survives refresh; outputUrl is derived from it. */
   storagePath?: string;
+  /** Veo Files API reference, kept so a downstream VideoGen can ask Veo
+   *  to extend this clip natively (motion-continuous) instead of falling
+   *  back to last-frame image-to-video. Expires ~2 days after creation. */
+  veoVideoRef?: VeoVideoRef;
   /** Output aspect ratio passed to Veo. */
   aspectRatio?: '16:9' | '9:16' | '1:1';
   durationSec?: 5 | 8;

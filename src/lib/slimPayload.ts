@@ -10,7 +10,7 @@ import type { Node } from '@xyflow/react';
  * The fields removed:
  *   - dataUrl          (Image source node — original upload as base64)
  *   - outputDataUrl    (ImageGen node — generated image)
- *   - outputUrl        (VideoGen node — full video as data URL)
+ *   - outputUrl        (VideoGen node — signed playback URL, server doesn't need it inline)
  *   - thumbnail        (YouTube node — small but no harm dropping)
  *   - thumbnailUrl     (Image node — blob: URL, server-useless anyway)
  *

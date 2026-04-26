@@ -7,19 +7,35 @@ import {
   NODE_WIDTH,
   type ImageGenNodeData,
   type ImageNodeData,
+  type VeoVideoRef,
   type VideoGenNodeData,
 } from '@/lib/types';
+
+/** Veo's Files API holds source clips for ~2 days. We treat anything
+ *  older as expired and fall back to last-frame image-to-video so the
+ *  user never sees a hard "ref not found" error from Veo. The buffer
+ *  (40h instead of 48h) gives the actual call a margin to complete
+ *  before Veo's GC hits the source. */
+const VEO_REF_TTL_MS = 40 * 60 * 60 * 1000;
+
+function isVeoRefFresh(ref: VeoVideoRef | undefined): ref is VeoVideoRef {
+  if (!ref?.uri || !ref.createdAt) return false;
+  const age = Date.now() - new Date(ref.createdAt).getTime();
+  return Number.isFinite(age) && age >= 0 && age < VEO_REF_TTL_MS;
+}
 
 const ASPECT_OPTIONS: ('16:9' | '9:16' | '1:1')[] = ['16:9', '9:16', '1:1'];
 const DURATIONS: (5 | 8)[] = [5, 8];
 
 /**
  * Picks a starting frame for Veo from the closest upstream source:
- *   1) closest connected VideoGen → extract last frame client-side
- *      (so VideoGen→VideoGen chains extend the prior clip)
- *   2) closest connected ImageGen → its outputDataUrl
- *   3) closest connected Image source → its dataUrl
- *   4) nothing → text-to-video (no starting frame)
+ *   1) closest connected VideoGen with a fresh Veo ref → native extend
+ *      (Flow's motion-continuous chain — preserves motion vectors)
+ *   2) closest connected VideoGen with an aged-out ref → last-frame
+ *      image-to-video fallback (works forever, but motion resets)
+ *   3) closest connected ImageGen → its outputDataUrl
+ *   4) closest connected Image source → its dataUrl
+ *   5) nothing → text-to-video
  *
  * "Closest" walks the upstream graph layer by layer and returns the first
  * layer that yields any usable frame; further-upstream items still appear
@@ -29,6 +45,7 @@ type StartingFrameSource =
   | { kind: 'image'; dataUrl: string; label: string }
   | { kind: 'image-gen'; dataUrl: string; label: string }
   | { kind: 'video-gen'; videoUrl: string; label: string }
+  | { kind: 'video-gen-extend'; veoRef: VeoVideoRef; videoUrl: string; label: string }
   | null;
 
 export function VideoGenNode({ id, data, selected }: NodeProps) {
@@ -79,6 +96,120 @@ export function VideoGenNode({ id, data, selected }: NodeProps) {
     flow.updateNodeData(id, { ...d, aspectRatio: a });
   const setDuration = (n: 5 | 8) => flow.updateNodeData(id, { ...d, durationSec: n });
 
+  const runGeneration = async (
+    args:
+      | { kind: 'extend'; veoRef: VeoVideoRef }
+      | { kind: 'image'; startingImageDataUrl?: string },
+  ): Promise<{
+    outputUrl: string;
+    storagePath: string;
+    veoVideoRef: VeoVideoRef | null;
+  }> => {
+    const requestBody: Record<string, unknown> = {
+      videoGenNodeId: id,
+      prompt: prompt.trim(),
+      aspectRatio,
+      durationSec,
+      canvasId,
+      // Slim before shipping — without this the upstream ImageGen
+      // output (~1–2MB base64) plus other media fields blow past
+      // Vercel's 4.5MB request body limit. The starting image
+      // rides separately above so we don't need it inside `nodes`.
+      nodes: slimNodesForApi(flow.getNodes()),
+      edges: flow.getEdges(),
+    };
+    if (args.kind === 'extend') {
+      requestBody.extendFromVeoRef = { uri: args.veoRef.uri, mimeType: args.veoRef.mimeType };
+    } else if (args.startingImageDataUrl) {
+      requestBody.startingImageDataUrl = args.startingImageDataUrl;
+    }
+
+    const res = await fetch('/api/generate/video', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody),
+    });
+
+    if (!res.ok) {
+      const raw = await res.text();
+      let msg = raw;
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && 'error' in parsed) msg = String((parsed as { error: unknown }).error);
+      } catch {
+        /* not JSON */
+      }
+      throw new Error(msg || `video-gen failed (${res.status})`);
+    }
+    if (!res.body) throw new Error('No response body');
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let resultUrl: string | null = null;
+    let resultStoragePath: string | null = null;
+    let resultVeoRef: VeoVideoRef | null = null;
+
+    streamLoop: while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const frames = buffer.split('\n\n');
+      buffer = frames.pop() ?? '';
+      for (const frame of frames) {
+        const line = frame.replace(/^data:\s*/, '').trim();
+        if (!line) continue;
+        let event:
+          | {
+              type: string;
+              message?: string;
+              error?: string;
+              outputUrl?: string;
+              storagePath?: string;
+              veoVideoRef?: VeoVideoRef | null;
+            }
+          | null = null;
+        try {
+          event = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        if (!event) continue;
+        if (event.type === 'status' && event.message) {
+          setStatusMsg(event.message);
+        } else if (event.type === 'done' && event.outputUrl && event.storagePath) {
+          resultUrl = event.outputUrl;
+          resultStoragePath = event.storagePath;
+          resultVeoRef = event.veoVideoRef ?? null;
+          break streamLoop;
+        } else if (event.type === 'error') {
+          throw new Error(event.error ?? 'Stream error');
+        }
+      }
+    }
+
+    if (!resultUrl || !resultStoragePath) {
+      throw new Error('Video stream ended without a result.');
+    }
+    return { outputUrl: resultUrl, storagePath: resultStoragePath, veoVideoRef: resultVeoRef };
+  };
+
+  /** Veo returns vague messages when the source video reference is gone:
+   *  matches "not found", "expired", "FAILED_PRECONDITION", or "video"
+   *  alongside a 4xx hint. We use this to decide when to silently fall
+   *  back to last-frame instead of failing the whole generation. */
+  const looksLikeExtendSourceFailure = (msg: string): boolean => {
+    const m = msg.toLowerCase();
+    return (
+      m.includes('not found') ||
+      m.includes('expired') ||
+      m.includes('failed_precondition') ||
+      m.includes('invalid_argument') ||
+      m.includes('permission') ||
+      m.includes('unsupported')
+    );
+  };
+
   const generate = async () => {
     if (isGenerating) return;
     if (!prompt.trim()) {
@@ -91,99 +222,45 @@ export function VideoGenNode({ id, data, selected }: NodeProps) {
     flow.updateNodeData(id, { ...d, isGenerating: true, status: 'pending' });
 
     try {
-      let startingImageDataUrl: string | undefined;
-      if (startingFrame?.kind === 'image' || startingFrame?.kind === 'image-gen') {
-        startingImageDataUrl = startingFrame.dataUrl;
-      } else if (startingFrame?.kind === 'video-gen') {
-        setStatusMsg('Extracting last frame from upstream video…');
-        startingImageDataUrl = await extractLastFrame(startingFrame.videoUrl);
-      }
+      let result: Awaited<ReturnType<typeof runGeneration>> | null = null;
 
-      const res = await fetch('/api/generate/video', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          videoGenNodeId: id,
-          prompt: prompt.trim(),
-          startingImageDataUrl,
-          aspectRatio,
-          durationSec,
-          canvasId,
-          // Slim before shipping — without this the upstream ImageGen
-          // output (~1–2MB base64) plus other media fields blow past
-          // Vercel's 4.5MB request body limit. The starting image
-          // rides separately above so we don't need it inside `nodes`.
-          nodes: slimNodesForApi(flow.getNodes()),
-          edges: flow.getEdges(),
-        }),
-      });
-
-      if (!res.ok) {
-        const raw = await res.text();
-        let msg = raw;
+      if (startingFrame?.kind === 'video-gen-extend') {
+        // Native Veo extension — preserves motion. If Veo rejects the
+        // source (TTL elapsed, ref invalid), drop down to last-frame
+        // image-to-video so the user still gets a clip.
         try {
-          const parsed = JSON.parse(raw);
-          if (parsed && 'error' in parsed) msg = String((parsed as { error: unknown }).error);
-        } catch {
-          /* not JSON */
-        }
-        throw new Error(msg || `video-gen failed (${res.status})`);
-      }
-      if (!res.body) throw new Error('No response body');
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let resultUrl: string | null = null;
-      let resultStoragePath: string | null = null;
-
-      streamLoop: while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const frames = buffer.split('\n\n');
-        buffer = frames.pop() ?? '';
-        for (const frame of frames) {
-          const line = frame.replace(/^data:\s*/, '').trim();
-          if (!line) continue;
-          let event:
-            | {
-                type: string;
-                message?: string;
-                error?: string;
-                outputUrl?: string;
-                storagePath?: string;
-              }
-            | null = null;
-          try {
-            event = JSON.parse(line);
-          } catch {
-            continue;
-          }
-          if (!event) continue;
-          if (event.type === 'status' && event.message) {
-            setStatusMsg(event.message);
-          } else if (event.type === 'done' && event.outputUrl && event.storagePath) {
-            resultUrl = event.outputUrl;
-            resultStoragePath = event.storagePath;
-            break streamLoop;
-          } else if (event.type === 'error') {
-            throw new Error(event.error ?? 'Stream error');
+          setStatusMsg('Asking Veo to extend the prior clip…');
+          result = await runGeneration({ kind: 'extend', veoRef: startingFrame.veoRef });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (looksLikeExtendSourceFailure(msg)) {
+            console.warn('[VideoGenNode] extend failed, falling back to last-frame:', msg);
+            setStatusMsg('Veo source expired — falling back to last frame…');
+            const startingImageDataUrl = await extractLastFrame(startingFrame.videoUrl);
+            result = await runGeneration({ kind: 'image', startingImageDataUrl });
+          } else {
+            throw err;
           }
         }
+      } else {
+        let startingImageDataUrl: string | undefined;
+        if (startingFrame?.kind === 'image' || startingFrame?.kind === 'image-gen') {
+          startingImageDataUrl = startingFrame.dataUrl;
+        } else if (startingFrame?.kind === 'video-gen') {
+          setStatusMsg('Extracting last frame from upstream video…');
+          startingImageDataUrl = await extractLastFrame(startingFrame.videoUrl);
+        }
+        result = await runGeneration({ kind: 'image', startingImageDataUrl });
       }
 
-      if (!resultUrl || !resultStoragePath) {
-        throw new Error('Video stream ended without a result.');
-      }
-
-      // Store the storage path (durable identity) and the signed playback
-      // URL. The path survives signed-URL expiry; on next mount we re-sign
-      // via /api/videos/sign if the URL is gone or stale.
+      // Store the storage path (durable identity), signed playback URL,
+      // and the Veo Files reference so a *downstream* VideoGen can
+      // extend this clip natively.
       flow.updateNodeData(id, {
         ...d,
-        outputUrl: resultUrl,
-        storagePath: resultStoragePath,
+        outputUrl: result.outputUrl,
+        storagePath: result.storagePath,
+        veoVideoRef: result.veoVideoRef ?? undefined,
         isGenerating: false,
         status: 'ready',
       });
@@ -226,7 +303,9 @@ export function VideoGenNode({ id, data, selected }: NodeProps) {
       </div>
 
       <div className="border-y border-ink-600 py-2 mb-2 -mx-1 px-1 text-[11px] font-mono">
-        <div className="node-label opacity-60 mb-1">starting frame</div>
+        <div className="node-label opacity-60 mb-1">
+          {startingFrame?.kind === 'video-gen-extend' ? 'extending' : 'starting frame'}
+        </div>
         {startingFrame === null ? (
           <div className="text-bone-400">none — text-to-video</div>
         ) : (
@@ -237,6 +316,9 @@ export function VideoGenNode({ id, data, selected }: NodeProps) {
                 alt=""
                 className="w-12 h-12 object-cover rounded-md bg-ink-900 border border-ink-600"
               />
+            )}
+            {startingFrame.kind === 'video-gen-extend' && (
+              <span className="text-ember">▶ continuing prior motion</span>
             )}
             {startingFrame.kind === 'video-gen' && (
               <span className="text-bone-300">last frame of upstream video</span>
@@ -321,14 +403,14 @@ export function VideoGenNode({ id, data, selected }: NodeProps) {
             download .mp4
           </button>
           <p className="mt-1.5 text-[10px] font-mono text-bone-400 leading-snug">
-            connect this node's right ● into another video-gen node to extend the sequence — the next clip starts from this clip's last frame.
+            connect this node's right ● into another video-gen node to extend the sequence — Veo continues this clip's motion (≈ 7s per hop, up to 148s). Older than ~2 days falls back to last-frame.
           </p>
         </div>
       )}
 
       {!outputUrl && !isGenerating && (
         <p className="mt-1 text-[10px] font-mono text-bone-400 leading-snug">
-          for talking avatars / lip-sync / audio: set <span className="text-ember">VEO_MODEL=veo-3.0-generate-001</span> in Vercel env. Veo 2 (default) is silent video only.
+          using <span className="text-ember">veo-3.1-generate-preview</span> (default — supports lip-sync, audio, native chain extension). Override with <span className="text-ember">VEO_MODEL</span> in Vercel env.
         </p>
       )}
     </NodeShell>
@@ -368,7 +450,8 @@ function pickStartingFrame(
     const nextLayer: string[] = [];
     const imageGenHits: { dataUrl: string; label: string }[] = [];
     const imageHits: { dataUrl: string; label: string }[] = [];
-    const videoGenHits: { videoUrl: string; label: string }[] = [];
+    const videoExtendHits: { veoRef: VeoVideoRef; videoUrl: string; label: string }[] = [];
+    const videoFallbackHits: { videoUrl: string; label: string }[] = [];
 
     for (const cur of layer) {
       for (const e of edges) {
@@ -394,16 +477,28 @@ function pickStartingFrame(
         } else if (k === 'video-gen') {
           const vg = node.data as unknown as VideoGenNodeData;
           if (vg.outputUrl) {
-            videoGenHits.push({
-              videoUrl: vg.outputUrl,
-              label: 'upstream video',
-            });
+            if (isVeoRefFresh(vg.veoVideoRef)) {
+              videoExtendHits.push({
+                veoRef: vg.veoVideoRef,
+                videoUrl: vg.outputUrl,
+                label: 'extending prior clip',
+              });
+            } else {
+              videoFallbackHits.push({
+                videoUrl: vg.outputUrl,
+                label: 'upstream video (last frame)',
+              });
+            }
           }
         }
       }
     }
 
-    if (videoGenHits.length > 0) return { kind: 'video-gen', ...videoGenHits[0] };
+    // Within a layer, native extension wins over last-frame fallback so
+    // chained VideoGens get motion continuity when the Veo source is
+    // still alive. Both still beat ImageGen/Image as before.
+    if (videoExtendHits.length > 0) return { kind: 'video-gen-extend', ...videoExtendHits[0] };
+    if (videoFallbackHits.length > 0) return { kind: 'video-gen', ...videoFallbackHits[0] };
     if (imageGenHits.length > 0) return { kind: 'image-gen', ...imageGenHits[0] };
     if (imageHits.length > 0) return { kind: 'image', ...imageHits[0] };
 

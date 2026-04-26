@@ -11,8 +11,13 @@ interface VideoGenRequest {
   videoGenNodeId: string;
   prompt: string;
   /** Starting frame as a base64 data URL (data:image/png;base64,...).
-   *  When omitted, Veo runs in pure text-to-video mode. */
+   *  Mutually exclusive with extendFromVeoRef. */
   startingImageDataUrl?: string;
+  /** Veo Files API reference for native video extension. When set, Veo
+   *  continues the prior clip's motion (this is what Google Flow does)
+   *  instead of starting fresh from a still frame. Mutually exclusive
+   *  with startingImageDataUrl. */
+  extendFromVeoRef?: { uri: string; mimeType: string };
   aspectRatio?: '16:9' | '9:16' | '1:1';
   durationSec?: 5 | 8;
   /** Used to scope the storage path so videos can be cleaned up alongside
@@ -22,22 +27,28 @@ interface VideoGenRequest {
   edges: CanvasEdge[];
 }
 
+/** Native extension is a Veo 3.1+ capability. If the env points at an
+ *  older model and the client asks to extend, we transparently bump to
+ *  3.1 so the call doesn't 4xx. Single-shot generations honor whatever
+ *  the env says. */
+const VEO_EXTEND_MODEL = 'veo-3.1-generate-preview';
+
 /**
  * POST /api/generate/video
  *
- * Generates a video clip with Veo 3 via the Gemini API. Returns an SSE
+ * Generates a video clip with Veo via the Gemini API. Returns an SSE
  * stream:
- *   {type:'status', message, progress?}  – progress pings during the 1–3
- *                                          minute Veo job (Vercel proxy
- *                                          would otherwise close the
- *                                          connection on idle).
- *   {type:'done', videoBase64, mimeType} – on success.
- *   {type:'error', error}                – on failure.
+ *   {type:'status', message}                                – progress pings
+ *   {type:'done', outputUrl, storagePath, veoVideoRef, ...} – on success.
+ *   {type:'error', error}                                   – on failure.
  *
- * If the client passes `startingImageDataUrl`, that frame is the first
- * frame of the video. This is what enables image-to-video AND the
- * VideoGen-to-VideoGen extension chain (the client pre-extracts the last
- * frame of the upstream video and ships it as the starting image).
+ * Three input modes (mutually exclusive):
+ *   - `extendFromVeoRef`     → Veo extends the prior clip natively. Best
+ *                              continuity; only works on Veo 3.1+ and only
+ *                              for source clips < ~2 days old.
+ *   - `startingImageDataUrl` → image-to-video (also the fallback when a
+ *                              source clip aged past Veo's TTL).
+ *   - neither                → text-to-video.
  *
  * Text-side context (sources, chats, prior artifacts) gets folded into
  * the prompt as guidance — same idea as ImageGen.
@@ -65,19 +76,25 @@ export const POST: APIRoute = async ({ request }) => {
 
   const aspectRatio = body.aspectRatio ?? '16:9';
   const durationSec = body.durationSec ?? 8;
+  const isExtension = !!body.extendFromVeoRef?.uri;
 
-  // Veo model name. Default to Veo 2 (widely available); set VEO_MODEL in
-  // env to use Veo 3 if your Gemini account has access. Common values:
-  //   veo-2.0-generate-001       (default — broadly available)
-  //   veo-3.0-generate-001       (preview availability)
-  //   veo-3.0-fast-generate-001  (cheaper Veo 3)
-  const veoModel = import.meta.env.VEO_MODEL || 'veo-2.0-generate-001';
+  // Veo model name. Default to Veo 3.1 preview because that's what
+  // unlocks native video extension (the `video:` parameter — Flow's
+  // motion-continuous chain). Override with VEO_MODEL in env for older
+  // models or Veo 3 Fast. Extension calls always force 3.1+ regardless,
+  // because older Veos reject the `video:` parameter outright.
+  //   veo-3.1-generate-preview        (default — supports extension + audio)
+  //   veo-3.1-fast-generate-preview   (cheaper)
+  //   veo-3.0-generate-001            (audio, no extension)
+  //   veo-2.0-generate-001            (silent, no extension)
+  const envModel = import.meta.env.VEO_MODEL;
+  const veoModel = isExtension ? VEO_EXTEND_MODEL : envModel || VEO_EXTEND_MODEL;
 
   const ctx = walkContext(body.videoGenNodeId, body.nodes, body.edges);
   const fullPrompt = composePrompt(prompt, ctx);
 
   let startingImage: { imageBytes: string; mimeType: string } | undefined;
-  if (body.startingImageDataUrl) {
+  if (!isExtension && body.startingImageDataUrl) {
     const parsed = parseDataUrl(body.startingImageDataUrl);
     if (parsed) startingImage = { imageBytes: parsed.data, mimeType: parsed.mimeType };
   }
@@ -91,16 +108,31 @@ export const POST: APIRoute = async ({ request }) => {
       try {
         const ai = new GoogleGenAI({ apiKey });
 
-        send({ type: 'status', message: 'Starting Veo job…' });
+        send({
+          type: 'status',
+          message: isExtension ? 'Extending prior clip with Veo…' : 'Starting Veo job…',
+        });
 
+        // Native extension passes the prior Veo Video reference; image
+        // and video are mutually exclusive in the SDK. Extension calls
+        // also can't set durationSeconds — Veo dictates the 7s hop size.
         let operation = await ai.models.generateVideos({
           model: veoModel,
           prompt: fullPrompt,
-          ...(startingImage ? { image: startingImage } : {}),
+          ...(isExtension
+            ? {
+                video: {
+                  uri: body.extendFromVeoRef!.uri,
+                  mimeType: body.extendFromVeoRef!.mimeType,
+                },
+              }
+            : startingImage
+              ? { image: startingImage }
+              : {}),
           config: {
             numberOfVideos: 1,
             aspectRatio,
-            durationSeconds: durationSec,
+            ...(isExtension ? {} : { durationSeconds: durationSec }),
             // 'allow_all' is region/account-restricted and returns a 400 in
             // most setups; 'allow_adult' is the broadly-supported value that
             // still permits people in frame.
@@ -192,12 +224,25 @@ export const POST: APIRoute = async ({ request }) => {
 
         const signedUrl = await signVideoUrl(supabase, storagePath);
 
+        // Capture the Veo Files API reference so a downstream VideoGen
+        // can extend this clip natively. videoUri is the URI we just used
+        // to download — it is the same URI Veo accepts back as the
+        // `video:` extension input within Veo's ~2-day TTL.
+        const veoVideoRef = videoUri
+          ? {
+              uri: videoUri,
+              mimeType: generated.video.mimeType ?? 'video/mp4',
+              createdAt: new Date().toISOString(),
+            }
+          : null;
+
         send({
           type: 'done',
           outputUrl: signedUrl,
           storagePath,
           mimeType,
           sizeBytes: arrayBuf.byteLength,
+          veoVideoRef,
         });
       } catch (err) {
         const e = err instanceof Error ? err : new Error(String(err));
