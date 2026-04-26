@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { walkContext, buildSystemPrompt, buildMessages } from '@/lib/ai/prompt';
+import { walkContext, buildSystemPrompt, buildMessages, attachImagesToLastUserTurn } from '@/lib/ai/prompt';
 import { streamChat, type ToolDef } from '@/lib/ai/anthropic';
 import { TEMPLATES } from '@/lib/ai/templates';
 import type { ChatRequest } from '@/lib/types';
@@ -67,7 +67,7 @@ export const POST: APIRoute = async ({ request }) => {
   }
 
   let systemPrompt: string;
-  let messages: ReturnType<typeof buildMessages>;
+  let messages: ReturnType<typeof attachImagesToLastUserTurn>;
   try {
     const context = walkContext(body.chatNodeId, body.nodes, body.edges);
     systemPrompt = buildSystemPrompt(context);
@@ -87,7 +87,11 @@ export const POST: APIRoute = async ({ request }) => {
     ) {
       history = history.slice(0, -1);
     }
-    messages = buildMessages(history, body.userMessage);
+    const baseMessages = buildMessages(history, body.userMessage);
+    // Attach any upstream images (Image source dataUrls + ImageGen
+    // outputDataUrls) to the latest user turn so Claude actually SEES the
+    // images instead of having to ask the user to describe them.
+    messages = attachImagesToLastUserTurn(baseMessages, context.images);
   } catch (err) {
     return logAndFail('chat:prompt', err);
   }
