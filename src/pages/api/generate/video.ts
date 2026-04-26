@@ -160,12 +160,34 @@ export const POST: APIRoute = async ({ request }) => {
 
         const generated = operation.response?.generatedVideos?.[0];
         if (!generated?.video) {
-          send({
-            type: 'error',
-            error:
-              operation.error?.message ??
-              'Veo finished without producing a video. Try a different prompt or starting frame.',
-          });
+          // Vague catch-all hides the most common real causes. Pull what
+          // Veo actually returned: RAI safety filter reasons, filter
+          // counts, and any operation-level error. Log the whole
+          // response server-side so we can inspect the rest in Vercel.
+          const rsp = operation.response;
+          const raiReasons = rsp?.raiMediaFilteredReasons ?? [];
+          const raiCount = rsp?.raiMediaFilteredCount ?? 0;
+          console.error('[videogen] empty result. operation.response =', JSON.stringify(rsp ?? {}), 'operation.error =', operation.error);
+
+          let detail: string;
+          const opErrMsg =
+            typeof operation.error?.message === 'string' ? operation.error.message : '';
+          if (opErrMsg) {
+            detail = opErrMsg;
+          } else if (raiReasons.length > 0) {
+            detail = `Veo's safety filter blocked the output (${raiReasons.join('; ')}). Try a less violent / brand-named prompt.`;
+          } else if (raiCount > 0) {
+            detail = `Veo's safety filter blocked ${raiCount} candidate${raiCount === 1 ? '' : 's'}. Try a different prompt.`;
+          } else if (isExtension) {
+            // The extension path has its own foot-gun: source video must
+            // be Veo 3.1+ output. Make that explicit so the client can
+            // fall back to last-frame instead of just showing red text.
+            detail = 'veo-empty: extension produced no video. The source clip may have been generated with an older Veo (only 3.1+ sources can be extended), or Veo silently dropped the output. Falling back to last-frame is recommended.';
+          } else {
+            detail = 'Veo finished without producing a video. Try a different prompt or starting frame.';
+          }
+
+          send({ type: 'error', error: detail });
           controller.close();
           return;
         }
