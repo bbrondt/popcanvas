@@ -20,6 +20,7 @@ import '@xyflow/react/dist/style.css';
 import { Toolbar } from './Toolbar';
 import { CustomEdge } from './CustomEdge';
 import { DiscoverPanel } from './DiscoverPanel';
+import { CanvasIdContext } from './canvasIdContext';
 import { YoutubeNode } from '../nodes/YoutubeNode';
 import { PdfNode } from '../nodes/PdfNode';
 import { UrlNode } from '../nodes/UrlNode';
@@ -111,16 +112,25 @@ function CanvasInner({ canvasId }: CanvasProps) {
     })();
   }, [canvasId]);
 
-  // Debounced autosave on any change
+  // Debounced autosave on any change. We log failures (413, 500, network)
+  // because previously they were swallowed — that's how 50MB base64-video
+  // payloads broke saves silently and lost videos on refresh.
   useEffect(() => {
     if (!loaded) return;
     if (saveTimeout.current) clearTimeout(saveTimeout.current);
-    saveTimeout.current = setTimeout(() => {
-      void fetch(`/api/canvas/${canvasId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title, nodes, edges, viewport: { x: 0, y: 0, zoom: 1 } }),
-      });
+    saveTimeout.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/canvas/${canvasId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title, nodes, edges, viewport: { x: 0, y: 0, zoom: 1 } }),
+        });
+        if (!res.ok) {
+          console.error(`[canvas:autosave] save failed ${res.status}:`, await res.text().catch(() => ''));
+        }
+      } catch (err) {
+        console.error('[canvas:autosave] network error:', err);
+      }
     }, 800);
     return () => {
       if (saveTimeout.current) clearTimeout(saveTimeout.current);
@@ -146,6 +156,7 @@ function CanvasInner({ canvasId }: CanvasProps) {
   );
 
   return (
+    <CanvasIdContext.Provider value={canvasId}>
     <div className="relative w-screen h-screen canvas-grid">
       <TitleBar title={title} onTitleChange={setTitle} canvasId={canvasId} />
       <Toolbar onOpenDiscover={() => setDiscoverOpen(true)} />
@@ -172,6 +183,7 @@ function CanvasInner({ canvasId }: CanvasProps) {
 
       <DiscoverPanel open={discoverOpen} onClose={() => setDiscoverOpen(false)} />
     </div>
+    </CanvasIdContext.Provider>
   );
 }
 

@@ -1,6 +1,8 @@
 import type { APIRoute } from 'astro';
 import { GoogleGenAI } from '@google/genai';
 import { walkContext } from '@/lib/ai/prompt';
+import { getServiceClient } from '@/lib/supabase/server';
+import { signVideoUrl, VIDEO_BUCKET } from '@/lib/videoStorage';
 import type { CanvasNode, CanvasEdge } from '@/lib/types';
 
 export const prerender = false;
@@ -13,6 +15,9 @@ interface VideoGenRequest {
   startingImageDataUrl?: string;
   aspectRatio?: '16:9' | '9:16' | '1:1';
   durationSec?: 5 | 8;
+  /** Used to scope the storage path so videos can be cleaned up alongside
+   *  the canvas they belong to. */
+  canvasId?: string;
   nodes: CanvasNode[];
   edges: CanvasEdge[];
 }
@@ -136,7 +141,11 @@ export const POST: APIRoute = async ({ request }) => {
         send({ type: 'status', message: 'Downloading video…' });
 
         // Veo returns a Google Cloud Storage URI requiring API-key auth.
-        // Fetch the bytes server-side, base64-encode, ship over SSE.
+        // Fetch the bytes server-side, then upload to Supabase Storage so
+        // the canvas only carries a tiny URL (a Veo clip easily exceeds
+        // Vercel's 4.5MB request body cap if shipped inline as base64,
+        // which silently breaks canvas autosave and loses videos on
+        // refresh).
         const videoUri = generated.video.uri;
         if (!videoUri) {
           send({ type: 'error', error: 'Veo returned a video with no URI.' });
@@ -155,12 +164,38 @@ export const POST: APIRoute = async ({ request }) => {
           return;
         }
         const arrayBuf = await dl.arrayBuffer();
-        const base64 = Buffer.from(arrayBuf).toString('base64');
         const mimeType = generated.video.mimeType ?? dl.headers.get('content-type') ?? 'video/mp4';
+        const ext = mimeType.split('/')[1]?.split(';')[0] || 'mp4';
+
+        send({ type: 'status', message: 'Uploading to storage…' });
+
+        // Path scoped per canvas (when known) so cleanup can wipe a whole
+        // canvas's videos with a single prefix delete. videoGenNodeId +
+        // timestamp keep regenerations distinct (we don't overwrite, so a
+        // user re-generating still has the prior file until manual GC).
+        const scope = body.canvasId ? `canvases/${body.canvasId}` : 'unscoped';
+        const storagePath = `videos/${scope}/${body.videoGenNodeId}-${Date.now()}.${ext}`;
+
+        const supabase = getServiceClient();
+        const { error: uploadErr } = await supabase.storage
+          .from(VIDEO_BUCKET)
+          .upload(storagePath, new Uint8Array(arrayBuf), {
+            contentType: mimeType,
+            cacheControl: '31536000',
+            upsert: false,
+          });
+        if (uploadErr) {
+          send({ type: 'error', error: `Storage upload failed: ${uploadErr.message}` });
+          controller.close();
+          return;
+        }
+
+        const signedUrl = await signVideoUrl(supabase, storagePath);
 
         send({
           type: 'done',
-          videoBase64: base64,
+          outputUrl: signedUrl,
+          storagePath,
           mimeType,
           sizeBytes: arrayBuf.byteLength,
         });
