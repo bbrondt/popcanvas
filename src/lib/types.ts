@@ -120,12 +120,16 @@ export interface ArtifactNodeData extends BaseNodeData {
 }
 
 /**
- * Which image model the node uses. nano-banana (Gemini 2.5 Flash Image)
- * is fast and cheap with strong multi-reference editing; gpt-image-2 is
- * OpenAI's reasoning image model — pricier, slower, but markedly better
- * on prompt adherence and text rendering. Toggleable per node.
+ * Which image model the node uses.
+ * - nano-banana: Gemini 2.5 Flash Image. Fast, cheap, strong on
+ *   multi-reference editing. Stylized aesthetic on portraits.
+ * - gpt-image-2: OpenAI's reasoning image model. Best prompt
+ *   adherence and text rendering. Recognizable "AI portrait" look.
+ * - flux-pro: Black Forest Labs Flux 1.1 Pro Ultra. The photoreal
+ *   portrait specialist — looks like an iPhone photo, not AI. Use
+ *   when feeding into Veo and you want the avatar to read as real.
  */
-export type ImageGenModel = 'nano-banana' | 'gpt-image-2';
+export type ImageGenModel = 'nano-banana' | 'gpt-image-2' | 'flux-pro';
 
 export interface ImageGenNodeData extends BaseNodeData {
   kind: 'image-gen';

@@ -22,6 +22,11 @@ const MODELS: { id: ImageGenModel; label: string; hint: string }[] = [
     label: 'gpt-2',
     hint: 'openai gpt-image-2 — pricier, best prompt adherence + text rendering',
   },
+  {
+    id: 'flux-pro',
+    label: 'flux',
+    hint: 'flux 1.1 pro ultra — most photoreal portraits; iPhone-photo aesthetic. best for video starting frames.',
+  },
 ];
 
 export function ImageGenNode({ id, data, selected }: NodeProps) {
