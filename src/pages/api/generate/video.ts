@@ -188,12 +188,9 @@ export const POST: APIRoute = async ({ request }) => {
             ],
             parameters: {
               sampleCount: 1,
-              resolution: '1080p',
-              // Stop Veo from silently rewriting the prompt to "more
-              // cinematic" language. This auto-enhance is the main
-              // cause of style/quality variance between successive
-              // regenerations of the same call.
-              enhancePrompt: false,
+              // resolution and enhancePrompt both rejected by Veo 3.1
+              // extension (yet another field the SDK's image-to-video
+              // path accepts but extension does not). Let Veo default.
             },
           };
           console.info('[videogen:extend] POST', startUrl.replace(apiKey, '***'), 'body =', JSON.stringify(startBody));
@@ -216,6 +213,13 @@ export const POST: APIRoute = async ({ request }) => {
           // Native extension passes the prior Veo Video reference; image
           // and video are mutually exclusive in the SDK. Extension calls
           // also can't set durationSeconds — Veo dictates the 7s hop size.
+          //
+          // Resolution is duration-bound on Veo 3.1:
+          //   8s clips cannot be 1080p ("1080p is not supported for a
+          //   duration of 8 seconds" INVALID_ARGUMENT). 5s clips can.
+          // Pick the highest resolution the chosen duration allows so
+          // we stay sharp without tripping the constraint.
+          const resolution = durationSec >= 8 ? '720p' : '1080p';
           sdkOperation = await ai.models.generateVideos({
             model: veoModel,
             prompt: fullPrompt,
@@ -224,6 +228,7 @@ export const POST: APIRoute = async ({ request }) => {
               numberOfVideos: 1,
               aspectRatio,
               durationSeconds: durationSec,
+              resolution,
               // 'allow_all' is region/account-restricted and returns a 400 in
               // most setups; 'allow_adult' is the broadly-supported value that
               // still permits people in frame.
