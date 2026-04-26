@@ -45,6 +45,11 @@ export interface UrlNodeData extends BaseNodeData {
   kind: 'url';
   url: string;
   favicon?: string;
+  /** Optional preview image (post cover, page hero, etc). */
+  thumbnail?: string;
+  /** Source platform tag — overrides the generic "url" header label so
+   *  TikTok/Instagram posts read as TikTok/Instagram instead of "URL". */
+  platform?: 'tiktok' | 'instagram' | 'youtube' | 'web';
 }
 
 export interface ImageNodeData extends BaseNodeData {
