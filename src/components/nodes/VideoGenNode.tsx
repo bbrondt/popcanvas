@@ -200,9 +200,15 @@ export function VideoGenNode({ id, data, selected }: NodeProps) {
    *  request and finishes the operation but returns no video — usually
    *  because the source clip wasn't Veo 3.1+ or Veo dropped the output
    *  silently. The user explicitly chose to extend; if Veo can't, the
-   *  next-best thing is image-to-video, not red text. */
+   *  next-best thing is image-to-video, not red text.
+   *
+   *  Exception: server tags errors with "no-fallback:" when retrying
+   *  with last-frame would just hit the same wall. The biggest example
+   *  is Veo's celebrity-likeness filter — falling back extracts the same
+   *  face from the same video and fails identically. */
   const looksLikeExtendSourceFailure = (msg: string): boolean => {
     const m = msg.toLowerCase();
+    if (m.includes('no-fallback')) return false;
     return (
       m.includes('not found') ||
       m.includes('expired') ||
