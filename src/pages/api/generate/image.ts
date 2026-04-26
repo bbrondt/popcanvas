@@ -1,7 +1,13 @@
 import type { APIRoute } from 'astro';
 import { GoogleGenAI } from '@google/genai';
 import { walkContext } from '@/lib/ai/prompt';
-import type { CanvasNode, CanvasEdge, ImageNodeData } from '@/lib/types';
+import { generateWithOpenAi } from '@/lib/ai/openaiImage';
+import type {
+  CanvasNode,
+  CanvasEdge,
+  ImageGenModel,
+  ImageNodeData,
+} from '@/lib/types';
 
 export const prerender = false;
 
@@ -9,6 +15,9 @@ interface ImageGenRequest {
   imageGenNodeId: string;
   prompt: string;
   aspectRatio?: '1:1' | '16:9' | '9:16' | '4:3' | '3:4';
+  /** Which model to call. nano-banana (default) is Gemini 2.5 Flash
+   *  Image; gpt-image-2 routes to OpenAI. */
+  model?: ImageGenModel;
   /** Reference images shipped explicitly so the bytes don't have to ride
    *  along inside `nodes` (which would blow past Vercel's body limit when
    *  there are several base64 images on the canvas). */
@@ -45,13 +54,7 @@ export const POST: APIRoute = async ({ request }) => {
     return Response.json({ error: 'Prompt is required.' }, { status: 400 });
   }
 
-  const apiKey = import.meta.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    return Response.json(
-      { error: 'GEMINI_API_KEY not set in env. Get one from aistudio.google.com.' },
-      { status: 500 },
-    );
-  }
+  const model: ImageGenModel = body.model ?? 'nano-banana';
 
   // Walk upstream for TEXT-shaped context (sources, chats, artifacts).
   // Image bytes come from body.references (preferred) — clients ship the
@@ -82,6 +85,42 @@ export const POST: APIRoute = async ({ request }) => {
   // context. Keep it concise — image models care more about the image
   // request than long contextual essays.
   const contextSummary = summarizeUpstream(ctx, prompt);
+
+  if (model === 'gpt-image-2') {
+    const openaiKey = import.meta.env.OPENAI_API_KEY;
+    if (!openaiKey) {
+      return Response.json(
+        { error: 'OPENAI_API_KEY not set in env. Required for gpt-image-2.' },
+        { status: 500 },
+      );
+    }
+    try {
+      const result = await generateWithOpenAi({
+        apiKey: openaiKey,
+        prompt: contextSummary,
+        aspectRatio: body.aspectRatio,
+        references: referenceImages,
+      });
+      return Response.json({
+        dataUrl: result.dataUrl,
+        mimeType: result.mimeType,
+        referenceCount: referenceImages.length,
+        modelNote: null,
+        model,
+      });
+    } catch (err) {
+      return logAndFail('imagegen:openai', err);
+    }
+  }
+
+  // nano-banana path (default).
+  const apiKey = import.meta.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return Response.json(
+      { error: 'GEMINI_API_KEY not set in env. Get one from aistudio.google.com.' },
+      { status: 500 },
+    );
+  }
 
   try {
     const ai = new GoogleGenAI({ apiKey });
@@ -130,6 +169,7 @@ export const POST: APIRoute = async ({ request }) => {
       mimeType: dataUrl.match(/^data:([^;]+);/)?.[1] ?? 'image/png',
       referenceCount: referenceImages.length,
       modelNote: textNote,
+      model,
     });
   } catch (err) {
     return logAndFail('imagegen:gemini', err);

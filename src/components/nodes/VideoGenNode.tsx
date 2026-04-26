@@ -194,10 +194,13 @@ export function VideoGenNode({ id, data, selected }: NodeProps) {
     return { outputUrl: resultUrl, storagePath: resultStoragePath, veoVideoRef: resultVeoRef };
   };
 
-  /** Veo returns vague messages when the source video reference is gone:
-   *  matches "not found", "expired", "FAILED_PRECONDITION", or "video"
-   *  alongside a 4xx hint. We use this to decide when to silently fall
-   *  back to last-frame instead of failing the whole generation. */
+  /** Decide whether an extension-mode failure should silently fall back
+   *  to last-frame image-to-video. Covers the obvious "ref expired /
+   *  unauthorized" cases plus the "veo-empty" case where Veo accepts the
+   *  request and finishes the operation but returns no video — usually
+   *  because the source clip wasn't Veo 3.1+ or Veo dropped the output
+   *  silently. The user explicitly chose to extend; if Veo can't, the
+   *  next-best thing is image-to-video, not red text. */
   const looksLikeExtendSourceFailure = (msg: string): boolean => {
     const m = msg.toLowerCase();
     return (
@@ -206,7 +209,10 @@ export function VideoGenNode({ id, data, selected }: NodeProps) {
       m.includes('failed_precondition') ||
       m.includes('invalid_argument') ||
       m.includes('permission') ||
-      m.includes('unsupported')
+      m.includes('unsupported') ||
+      m.includes('veo-empty') ||
+      m.includes('finished without producing') ||
+      m.includes('safety filter')
     );
   };
 

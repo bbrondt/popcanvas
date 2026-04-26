@@ -119,6 +119,14 @@ export interface ArtifactNodeData extends BaseNodeData {
   autoGenerate?: boolean;
 }
 
+/**
+ * Which image model the node uses. nano-banana (Gemini 2.5 Flash Image)
+ * is fast and cheap with strong multi-reference editing; gpt-image-2 is
+ * OpenAI's reasoning image model — pricier, slower, but markedly better
+ * on prompt adherence and text rendering. Toggleable per node.
+ */
+export type ImageGenModel = 'nano-banana' | 'gpt-image-2';
+
 export interface ImageGenNodeData extends BaseNodeData {
   kind: 'image-gen';
   /** What the user wants generated. */
@@ -127,6 +135,8 @@ export interface ImageGenNodeData extends BaseNodeData {
   outputDataUrl?: string;
   /** Aspect ratio hint passed to the model (1:1, 16:9, 9:16, etc). */
   aspectRatio?: '1:1' | '16:9' | '9:16' | '4:3' | '3:4';
+  /** Which model to call. Defaults to nano-banana when unset. */
+  model?: ImageGenModel;
   isGenerating?: boolean;
 }
 
