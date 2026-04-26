@@ -133,6 +133,8 @@ export function DiscoverPanel({ open, onClose }: DiscoverPanelProps) {
       // Instead of asking the URL extractor to do an impossible thing, bake
       // the data we ALREADY paid Apify for directly into the node as content
       // and mark it ready. Claude reads d.content via the system prompt.
+      // We also pass the cover thumbnail + platform tag so the node renders
+      // as a TikTok/Instagram card on the canvas instead of a generic URL.
       node = {
         id,
         type: 'url',
@@ -143,6 +145,8 @@ export function DiscoverPanel({ open, onClose }: DiscoverPanelProps) {
           url: r.url,
           title: r.title,
           content: formatSocialContent(r),
+          thumbnail: r.thumbnail,
+          platform: r.platform,
         } satisfies UrlNodeData,
       } as Node;
     }
