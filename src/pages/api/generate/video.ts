@@ -167,19 +167,23 @@ export const POST: APIRoute = async ({ request }) => {
           // Resolution does need to be set explicitly though — extension
           // defaults to 720p which produces a visible quality drop
           // against a 1080p source. 1080p is the published cap.
-          // Send the user's prompt verbatim. An earlier version wrapped
-          // it with a long "[CONTINUATION DIRECTIVE]" pre-amble; that
-          // over-specification actively degraded quality (Veo prefers
-          // concise prompts and may have re-interpreted the scene as a
-          // narrated doc). Per Google's prompting guide, character /
-          // voice / style continuity is the *user's* job to encode in
-          // the prompt itself (repeat character description and voice
-          // each hop), not the system's job to inject.
+          //
+          // URI normalization: Veo's response gives us a download URL
+          // like `https://generativelanguage.googleapis.com/v1beta/files/abc:download?alt=media`.
+          // For extension input, several reports suggest the API wants
+          // the bare resource path (`files/abc`) — passing the download
+          // URL is accepted (the call returns 200 and Veo even runs
+          // safety checks against the source) but the model may quietly
+          // ignore it as an extension seed and just generate from
+          // prompt, producing a "fresh-feeling" clip. Strip to the
+          // resource path so Veo treats it as a true extension source.
+          const sourceUri = normalizeVeoFileUri(body.extendFromVeoRef!.uri);
+          console.info('[videogen:extend] sourceUri (normalized) =', sourceUri, 'original =', body.extendFromVeoRef!.uri);
           const startBody = {
             instances: [
               {
                 prompt: fullPrompt,
-                video: { uri: body.extendFromVeoRef!.uri },
+                video: { uri: sourceUri },
               },
             ],
             parameters: {
@@ -192,12 +196,14 @@ export const POST: APIRoute = async ({ request }) => {
               enhancePrompt: false,
             },
           };
+          console.info('[videogen:extend] POST', startUrl.replace(apiKey, '***'), 'body =', JSON.stringify(startBody));
           const startRes = await fetch(startUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(startBody),
           });
           const startText = await startRes.text();
+          console.info('[videogen:extend] start response status', startRes.status, 'body =', startText);
           if (!startRes.ok) {
             throw new Error(startText || `Veo extension start failed (${startRes.status})`);
           }
@@ -434,6 +440,24 @@ function parseDataUrl(url: string): { mimeType: string; data: string } | null {
 
 function sleep(ms: number) {
   return new Promise<void>((r) => setTimeout(r, ms));
+}
+
+/**
+ * Convert any Veo file URI form into the bare resource path the
+ * extension endpoint actually wants:
+ *   https://...googleapis.com/v1beta/files/abc:download?alt=media → files/abc
+ *   https://...googleapis.com/v1beta/files/abc                  → files/abc
+ *   files/abc                                                    → files/abc
+ *   abc                                                          → files/abc
+ */
+function normalizeVeoFileUri(uri: string): string {
+  if (!uri) return uri;
+  // Pull the segment after "files/" up to the first non-id char.
+  const m = uri.match(/files\/([A-Za-z0-9_-]+)/);
+  if (m) return `files/${m[1]}`;
+  // No "files/" prefix at all — assume the whole thing is the id.
+  if (/^[A-Za-z0-9_-]+$/.test(uri)) return `files/${uri}`;
+  return uri;
 }
 
 function composePrompt(userPrompt: string, ctx: ReturnType<typeof walkContext>): string {
