@@ -33,6 +33,33 @@ interface VideoGenRequest {
  *  the env says. */
 const VEO_EXTEND_MODEL = 'veo-3.1-generate-preview';
 
+/** Shapes the Gemini predictLongRunning REST endpoint returns. The
+ *  @google/genai SDK reshapes these into its own object hierarchy, but
+ *  for extension calls we go to REST directly so we own the wire
+ *  format — see the comment at the call site. */
+interface RawVeoVideo {
+  uri?: string;
+  mimeType?: string;
+  encoding?: string;
+}
+interface RawVeoSample {
+  video?: RawVeoVideo;
+}
+interface RawVeoGenerateVideoResponse {
+  generatedSamples?: RawVeoSample[];
+  raiMediaFilteredCount?: number;
+  raiMediaFilteredReasons?: string[];
+}
+interface RawVeoOperationResponse {
+  generateVideoResponse?: RawVeoGenerateVideoResponse;
+}
+interface RawVeoOperationPoll {
+  name?: string;
+  done?: boolean;
+  response?: RawVeoOperationResponse;
+  error?: { code?: number; message?: string; status?: string };
+}
+
 /**
  * POST /api/generate/video
  *
@@ -113,39 +140,76 @@ export const POST: APIRoute = async ({ request }) => {
           message: isExtension ? 'Extending prior clip with Veo…' : 'Starting Veo job…',
         });
 
-        // Native extension passes the prior Veo Video reference; image
-        // and video are mutually exclusive in the SDK. Extension calls
-        // also can't set durationSeconds — Veo dictates the 7s hop size.
-        let operation = await ai.models.generateVideos({
-          model: veoModel,
-          prompt: fullPrompt,
-          ...(isExtension
-            ? {
-                video: {
-                  uri: body.extendFromVeoRef!.uri,
-                  mimeType: body.extendFromVeoRef!.mimeType,
-                },
-              }
-            : startingImage
-              ? { image: startingImage }
-              : {}),
-          config: {
-            numberOfVideos: 1,
-            aspectRatio,
-            ...(isExtension ? {} : { durationSeconds: durationSec }),
-            // 'allow_all' is region/account-restricted and returns a 400 in
-            // most setups; 'allow_adult' is the broadly-supported value that
-            // still permits people in frame.
-            personGeneration: 'allow_adult',
-          },
-        });
+        // Two completely separate paths because the @google/genai SDK
+        // (v1.50.1) silently serializes Video.mimeType as `encoding` in
+        // the request body, which Veo 3.1's extension endpoint rejects
+        // with INVALID_ARGUMENT. Even passing only `uri` to the SDK
+        // appears unreliable across SDK versions, so for extensions we
+        // bypass the SDK entirely and go straight to the REST endpoint
+        // — full control over the wire format. Image-to-video and
+        // text-to-video stay on the SDK because that path works fine.
+        let sdkOperation: Awaited<ReturnType<typeof ai.models.generateVideos>> | null = null;
+        let rawOperationName: string | null = null;
+        let rawOperationDone = false;
+        let rawOperationResponse: RawVeoOperationResponse | null = null;
+        let rawOperationError: { code?: number; message?: string; status?: string } | null = null;
+
+        if (isExtension) {
+          const startUrl = `https://generativelanguage.googleapis.com/v1beta/models/${veoModel}:predictLongRunning?key=${apiKey}`;
+          const startBody = {
+            instances: [
+              {
+                prompt: fullPrompt,
+                video: { uri: body.extendFromVeoRef!.uri },
+              },
+            ],
+            parameters: {
+              sampleCount: 1,
+              aspectRatio,
+              personGeneration: 'allow_adult',
+            },
+          };
+          const startRes = await fetch(startUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(startBody),
+          });
+          const startText = await startRes.text();
+          if (!startRes.ok) {
+            throw new Error(startText || `Veo extension start failed (${startRes.status})`);
+          }
+          const startJson = JSON.parse(startText) as { name?: string };
+          if (!startJson.name) {
+            throw new Error('Veo extension started but returned no operation name.');
+          }
+          rawOperationName = startJson.name;
+        } else {
+          // Native extension passes the prior Veo Video reference; image
+          // and video are mutually exclusive in the SDK. Extension calls
+          // also can't set durationSeconds — Veo dictates the 7s hop size.
+          sdkOperation = await ai.models.generateVideos({
+            model: veoModel,
+            prompt: fullPrompt,
+            ...(startingImage ? { image: startingImage } : {}),
+            config: {
+              numberOfVideos: 1,
+              aspectRatio,
+              durationSeconds: durationSec,
+              // 'allow_all' is region/account-restricted and returns a 400 in
+              // most setups; 'allow_adult' is the broadly-supported value that
+              // still permits people in frame.
+              personGeneration: 'allow_adult',
+            },
+          });
+        }
 
         // Poll. Veo typically finishes in 1–3 minutes for 8s clips. We
         // ping the client every 10s so the SSE connection stays warm and
         // the user sees progress.
         const startedAt = Date.now();
         let pollCount = 0;
-        while (!operation.done) {
+        const isDone = () => (sdkOperation ? !!sdkOperation.done : rawOperationDone);
+        while (!isDone()) {
           await sleep(10_000);
           pollCount += 1;
           const elapsed = Math.round((Date.now() - startedAt) / 1000);
@@ -155,23 +219,60 @@ export const POST: APIRoute = async ({ request }) => {
             elapsedSec: elapsed,
             poll: pollCount,
           });
-          operation = await ai.operations.getVideosOperation({ operation });
+          if (sdkOperation) {
+            sdkOperation = await ai.operations.getVideosOperation({ operation: sdkOperation });
+          } else if (rawOperationName) {
+            const pollUrl = `https://generativelanguage.googleapis.com/v1beta/${rawOperationName}?key=${apiKey}`;
+            const pollRes = await fetch(pollUrl);
+            const pollText = await pollRes.text();
+            if (!pollRes.ok) {
+              throw new Error(pollText || `Veo extension poll failed (${pollRes.status})`);
+            }
+            const pollJson = JSON.parse(pollText) as RawVeoOperationPoll;
+            rawOperationDone = !!pollJson.done;
+            rawOperationResponse = pollJson.response ?? null;
+            rawOperationError = pollJson.error ?? null;
+          }
         }
 
-        const generated = operation.response?.generatedVideos?.[0];
+        // Normalize the result so the rest of the pipeline (download +
+        // Supabase upload) doesn't need to know which path produced it.
+        let generated: { video?: { uri?: string; mimeType?: string } } | undefined;
+        let opError: { message?: string } | undefined;
+        let raiReasons: string[] = [];
+        let raiCount = 0;
+        if (sdkOperation) {
+          generated = sdkOperation.response?.generatedVideos?.[0];
+          opError =
+            typeof sdkOperation.error?.message === 'string'
+              ? { message: sdkOperation.error.message }
+              : undefined;
+          raiReasons = sdkOperation.response?.raiMediaFilteredReasons ?? [];
+          raiCount = sdkOperation.response?.raiMediaFilteredCount ?? 0;
+        } else {
+          const sample = rawOperationResponse?.generateVideoResponse?.generatedSamples?.[0];
+          generated = sample ? { video: sample.video } : undefined;
+          opError = rawOperationError?.message ? { message: rawOperationError.message } : undefined;
+          raiReasons = rawOperationResponse?.generateVideoResponse?.raiMediaFilteredReasons ?? [];
+          raiCount = rawOperationResponse?.generateVideoResponse?.raiMediaFilteredCount ?? 0;
+        }
         if (!generated?.video) {
-          // Vague catch-all hides the most common real causes. Pull what
-          // Veo actually returned: RAI safety filter reasons, filter
-          // counts, and any operation-level error. Log the whole
-          // response server-side so we can inspect the rest in Vercel.
-          const rsp = operation.response;
-          const raiReasons = rsp?.raiMediaFilteredReasons ?? [];
-          const raiCount = rsp?.raiMediaFilteredCount ?? 0;
-          console.error('[videogen] empty result. operation.response =', JSON.stringify(rsp ?? {}), 'operation.error =', operation.error);
+          // Vague catch-all hides the most common real causes. We
+          // already pulled raiReasons / raiCount / opError above so the
+          // SDK and raw paths share the same diagnostics. Log the whole
+          // response so we can inspect the rest in Vercel.
+          console.error(
+            '[videogen] empty result.',
+            'sdkResponse =',
+            JSON.stringify(sdkOperation?.response ?? {}),
+            'rawResponse =',
+            JSON.stringify(rawOperationResponse ?? {}),
+            'opError =',
+            opError,
+          );
 
           let detail: string;
-          const opErrMsg =
-            typeof operation.error?.message === 'string' ? operation.error.message : '';
+          const opErrMsg = opError?.message ?? '';
           const reasonsBlob = raiReasons.join('; ').toLowerCase();
           // Veo's celebrity-likeness classifier false-positives constantly
           // on AI-generated portraits (the training set is celebrity-heavy
