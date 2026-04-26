@@ -185,9 +185,15 @@ export const POST: APIRoute = async ({ request }) => {
             ],
             parameters: {
               sampleCount: 1,
-              // resolution and enhancePrompt both rejected by Veo 3.1
-              // extension (yet another field the SDK's image-to-video
-              // path accepts but extension does not). Let Veo default.
+              // Lock extension output to 1080p when the source allows it.
+              // Veo 3.1 caps 8s clips at 720p (the source generation
+              // path knows this); extensions are 7s hops which CAN be
+              // 1080p. Without this, Veo can default to 720p mid-chain
+              // even when the source was 1080p, producing the avatar
+              // softness Flow doesn't exhibit. If Veo rejects 1080p
+              // here for some source/duration combo, the amber banner
+              // will surface the error and we'll back off.
+              resolution: '1080p',
             },
           };
           console.info('[videogen:extend] POST', startUrl.replace(apiKey, '***'), 'body =', JSON.stringify(startBody));
