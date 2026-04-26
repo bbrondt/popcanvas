@@ -121,10 +121,12 @@ export const POST: APIRoute = async ({ request }) => {
           prompt: fullPrompt,
           ...(isExtension
             ? {
-                video: {
-                  uri: body.extendFromVeoRef!.uri,
-                  mimeType: body.extendFromVeoRef!.mimeType,
-                },
+                // Note: pass ONLY `uri`. The @google/genai SDK serializes
+                // mimeType as `encoding` in the request, which Veo 3.1's
+                // extension endpoint rejects with INVALID_ARGUMENT
+                // ("`encoding` isn't supported by this model"). Veo
+                // infers the encoding from the URI on its side.
+                video: { uri: body.extendFromVeoRef!.uri },
               }
             : startingImage
               ? { image: startingImage }
