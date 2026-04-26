@@ -129,18 +129,20 @@ export function DiscoverPanel({ open, onClose }: DiscoverPanelProps) {
         } satisfies YoutubeNodeData,
       } as Node;
     } else {
-      // TikTok and Instagram both fall back to a URL node — the URL extractor
-      // (Jina/Firecrawl) handles their public pages reasonably well, and the
-      // node title pre-populates so the user can tell what's what.
+      // TikTok and Instagram pages return 451 to Jina (and most scrapers).
+      // Instead of asking the URL extractor to do an impossible thing, bake
+      // the data we ALREADY paid Apify for directly into the node as content
+      // and mark it ready. Claude reads d.content via the system prompt.
       node = {
         id,
         type: 'url',
         position: { x: center.x + jitter(), y: center.y + jitter() },
         data: {
           kind: 'url',
-          status: 'idle',
+          status: 'ready',
           url: r.url,
           title: r.title,
+          content: formatSocialContent(r),
         } satisfies UrlNodeData,
       } as Node;
     }
@@ -249,9 +251,15 @@ export function DiscoverPanel({ open, onClose }: DiscoverPanelProps) {
           ))}
         </div>
 
-        <footer className="px-5 py-3 border-t border-ink-600 text-[10px] font-mono text-bone-400 leading-relaxed">
-          click a card to add it as a source on your canvas. wire it to a chat
-          or artifact node to analyze.
+        <footer className="px-5 py-3 border-t border-ink-600 text-[10px] font-mono text-bone-400 leading-relaxed space-y-1">
+          <div>
+            click a card to add it as a source on your canvas. wire it to a chat
+            or artifact node to analyze.
+          </div>
+          <div className="opacity-70">
+            yt: official api, sorted by views, last 90d. tt/ig: apify search +
+            filtered for &gt;=1k views &amp; recent posts.
+          </div>
         </footer>
       </div>
     </div>
@@ -319,4 +327,39 @@ function formatCount(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return String(n);
+}
+
+/**
+ * Pack everything we know about a TikTok/Instagram post into the node's
+ * content field, in a format Claude can quote from when it's connected to
+ * a chat or artifact. Looks like:
+ *
+ *   Platform: TikTok
+ *   Author: @brad
+ *   Posted: 2025-04-01
+ *   Views: 1.2M · Likes: 50K
+ *   URL: https://...
+ *
+ *   Caption:
+ *   <full caption text>
+ */
+function formatSocialContent(r: TrendingResult): string {
+  const lines: string[] = [];
+  lines.push(`Platform: ${r.platform.toUpperCase()}`);
+  if (r.author) lines.push(`Author: @${r.author}`);
+  if (r.publishedAt) {
+    const d = new Date(r.publishedAt);
+    if (!isNaN(d.getTime())) lines.push(`Posted: ${d.toISOString().slice(0, 10)}`);
+  }
+  const stats: string[] = [];
+  if (typeof r.views === 'number') stats.push(`Views: ${r.views.toLocaleString()}`);
+  if (typeof r.likes === 'number') stats.push(`Likes: ${r.likes.toLocaleString()}`);
+  if (stats.length) lines.push(stats.join(' · '));
+  lines.push(`URL: ${r.url}`);
+  if (r.description) {
+    lines.push('');
+    lines.push('Caption:');
+    lines.push(r.description);
+  }
+  return lines.join('\n');
 }
