@@ -29,6 +29,7 @@ export const GET: APIRoute = async ({ url }) => {
     hasSupadata: Boolean(import.meta.env.SUPADATA_API_KEY),
     hasYoutubeApi: Boolean(import.meta.env.YOUTUBE_API_KEY),
     hasApify: Boolean(import.meta.env.APIFY_API_TOKEN),
+    hasGemini: Boolean(import.meta.env.GEMINI_API_KEY),
   };
 
   const result: Record<string, unknown> = { ok: true, env };

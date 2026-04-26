@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { findConnectedSources, buildSystemPrompt, buildMessages } from '@/lib/ai/prompt';
+import { walkContext, buildSystemPrompt, buildMessages } from '@/lib/ai/prompt';
 import { streamChat, type ToolDef } from '@/lib/ai/anthropic';
 import { TEMPLATES } from '@/lib/ai/templates';
 import type { ChatRequest } from '@/lib/types';
@@ -69,8 +69,8 @@ export const POST: APIRoute = async ({ request }) => {
   let systemPrompt: string;
   let messages: ReturnType<typeof buildMessages>;
   try {
-    const sources = findConnectedSources(body.chatNodeId, body.nodes, body.edges);
-    systemPrompt = buildSystemPrompt(sources);
+    const context = walkContext(body.chatNodeId, body.nodes, body.edges);
+    systemPrompt = buildSystemPrompt(context);
     // history is whatever messages existed *before* this new user turn.
     // Falling back to chatNode.data.messages is safe for old clients but
     // strips the trailing user message if present so we don't send it twice.

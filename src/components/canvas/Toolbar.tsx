@@ -13,6 +13,7 @@ const SOURCE_KINDS: { kind: NodeKind; label: string; symbol: string }[] = [
 const CONSUMER_KINDS: { kind: NodeKind; label: string; symbol: string }[] = [
   { kind: 'chat', label: 'Chat', symbol: '⌘' },
   { kind: 'artifact', label: 'Artifact', symbol: '✦' },
+  { kind: 'image-gen', label: 'Image Gen', symbol: '◇' },
 ];
 
 interface ToolbarProps {
@@ -112,5 +113,9 @@ function defaultData(kind: NodeKind) {
       return { kind, status: 'idle' as const, messages: [] };
     case 'artifact':
       return { kind, status: 'idle' as const, template: 'youtube-script' as const };
+    case 'image-gen':
+      return { kind, status: 'idle' as const, prompt: '', aspectRatio: '1:1' as const };
+    case 'video-gen':
+      return { kind, status: 'idle' as const, prompt: '', durationSec: 8 as const };
   }
 }
