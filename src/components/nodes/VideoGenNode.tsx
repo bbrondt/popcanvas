@@ -45,7 +45,16 @@ type StartingFrameSource =
   | { kind: 'image'; dataUrl: string; label: string }
   | { kind: 'image-gen'; dataUrl: string; label: string }
   | { kind: 'video-gen'; videoUrl: string; label: string }
-  | { kind: 'video-gen-extend'; veoRef: VeoVideoRef; videoUrl: string; label: string }
+  | {
+      kind: 'video-gen-extend';
+      veoRef: VeoVideoRef;
+      videoUrl: string;
+      /** Storage path of the upstream clip — server uses this to fetch
+       *  bytes for inline-bytes extension, which is more reliable than
+       *  the URI-based form. */
+      storagePath?: string;
+      label: string;
+    }
   | null;
 
 export function VideoGenNode({ id, data, selected }: NodeProps) {
@@ -102,7 +111,7 @@ export function VideoGenNode({ id, data, selected }: NodeProps) {
 
   const runGeneration = async (
     args:
-      | { kind: 'extend'; veoRef: VeoVideoRef }
+      | { kind: 'extend'; veoRef: VeoVideoRef; storagePath?: string }
       | { kind: 'image'; startingImageDataUrl?: string },
   ): Promise<{
     outputUrl: string;
@@ -124,6 +133,9 @@ export function VideoGenNode({ id, data, selected }: NodeProps) {
     };
     if (args.kind === 'extend') {
       requestBody.extendFromVeoRef = { uri: args.veoRef.uri, mimeType: args.veoRef.mimeType };
+      if (args.storagePath) {
+        requestBody.extendFromStoragePath = args.storagePath;
+      }
     } else if (args.startingImageDataUrl) {
       requestBody.startingImageDataUrl = args.startingImageDataUrl;
     }
@@ -260,7 +272,11 @@ export function VideoGenNode({ id, data, selected }: NodeProps) {
         try {
           console.info('%c[VideoGen] PATH: native Veo extension', 'color:#9b87ff;font-weight:bold');
           setStatusMsg('Asking Veo to extend the prior clip…');
-          result = await runGeneration({ kind: 'extend', veoRef: startingFrame.veoRef });
+          result = await runGeneration({
+            kind: 'extend',
+            veoRef: startingFrame.veoRef,
+            storagePath: startingFrame.storagePath,
+          });
           console.info('%c[VideoGen] extension SUCCEEDED', 'color:#5dd39e;font-weight:bold');
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -521,7 +537,12 @@ function pickStartingFrame(
     const nextLayer: string[] = [];
     const imageGenHits: { dataUrl: string; label: string }[] = [];
     const imageHits: { dataUrl: string; label: string }[] = [];
-    const videoExtendHits: { veoRef: VeoVideoRef; videoUrl: string; label: string }[] = [];
+    const videoExtendHits: {
+      veoRef: VeoVideoRef;
+      videoUrl: string;
+      storagePath?: string;
+      label: string;
+    }[] = [];
     const videoFallbackHits: { videoUrl: string; label: string }[] = [];
 
     for (const cur of layer) {
@@ -552,6 +573,7 @@ function pickStartingFrame(
               videoExtendHits.push({
                 veoRef: vg.veoVideoRef,
                 videoUrl: vg.outputUrl,
+                storagePath: vg.storagePath,
                 label: 'extending prior clip',
               });
             } else {
