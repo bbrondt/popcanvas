@@ -326,6 +326,13 @@ export function VideoGenNode({ id, data, selected }: NodeProps) {
             <span className="text-bone-300 truncate flex-1">{startingFrame.label}</span>
           </div>
         )}
+        {startingFrame?.kind === 'video-gen' && (
+          <div className="mt-1 text-[10px] text-bone-400 leading-snug">
+            no Veo reference on the upstream clip — regenerate it to switch to
+            motion-continuous extension. (clips generated before this update
+            don't have one yet.)
+          </div>
+        )}
       </div>
 
       <textarea
