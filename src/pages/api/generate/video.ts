@@ -185,6 +185,11 @@ export const POST: APIRoute = async ({ request }) => {
             parameters: {
               sampleCount: 1,
               resolution: '1080p',
+              // Stop Veo from silently rewriting the prompt to "more
+              // cinematic" language. This auto-enhance is the main
+              // cause of style/quality variance between successive
+              // regenerations of the same call.
+              enhancePrompt: false,
             },
           };
           const startRes = await fetch(startUrl, {
