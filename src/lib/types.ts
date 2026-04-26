@@ -134,8 +134,12 @@ export interface VideoGenNodeData extends BaseNodeData {
   kind: 'video-gen';
   /** Motion description. */
   prompt?: string;
-  /** Final video URL or data URL after generation. */
+  /** Playable URL for the video. Signed against `storagePath` and refreshed
+   *  on mount when expired. Can be empty even when `storagePath` is set. */
   outputUrl?: string;
+  /** Storage path inside the canvas-uploads bucket. The durable identity
+   *  of the video — survives refresh; outputUrl is derived from it. */
+  storagePath?: string;
   /** Output aspect ratio passed to Veo. */
   aspectRatio?: '16:9' | '9:16' | '1:1';
   durationSec?: 5 | 8;

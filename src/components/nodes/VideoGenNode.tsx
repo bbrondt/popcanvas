@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useReactFlow, useStore, type NodeProps } from '@xyflow/react';
 import { NodeShell } from './NodeShell';
 import { slimNodesForApi } from '@/lib/slimPayload';
+import { useCanvasId } from '../canvas/canvasIdContext';
 import {
   NODE_WIDTH,
   type ImageGenNodeData,
@@ -14,24 +15,26 @@ const DURATIONS: (5 | 8)[] = [5, 8];
 
 /**
  * Picks a starting frame for Veo from the closest upstream source:
- *   1) directly connected ImageGen → its outputDataUrl
- *   2) directly connected Image source → its dataUrl
- *   3) directly connected VideoGen → extract last frame client-side
+ *   1) closest connected VideoGen → extract last frame client-side
+ *      (so VideoGen→VideoGen chains extend the prior clip)
+ *   2) closest connected ImageGen → its outputDataUrl
+ *   3) closest connected Image source → its dataUrl
  *   4) nothing → text-to-video (no starting frame)
  *
- * "Closest" means hop=1; further-upstream items still appear in the
- * upstream context panel for guidance but aren't used as the literal
- * first frame.
+ * "Closest" walks the upstream graph layer by layer and returns the first
+ * layer that yields any usable frame; further-upstream items still appear
+ * in the upstream context panel for guidance.
  */
 type StartingFrameSource =
   | { kind: 'image'; dataUrl: string; label: string }
   | { kind: 'image-gen'; dataUrl: string; label: string }
-  | { kind: 'video-gen'; videoBase64: string; mimeType: string; label: string }
+  | { kind: 'video-gen'; videoUrl: string; label: string }
   | null;
 
 export function VideoGenNode({ id, data, selected }: NodeProps) {
   const d = data as VideoGenNodeData;
   const flow = useReactFlow();
+  const canvasId = useCanvasId();
   const [isGenerating, setIsGenerating] = useState(false);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | undefined>(undefined);
@@ -40,8 +43,36 @@ export function VideoGenNode({ id, data, selected }: NodeProps) {
   const aspectRatio: '16:9' | '9:16' | '1:1' = (d as { aspectRatio?: '16:9' | '9:16' | '1:1' }).aspectRatio ?? '16:9';
   const durationSec = d.durationSec ?? 8;
   const outputUrl = d.outputUrl;
+  const storagePath = d.storagePath;
 
   const startingFrame = useStore((s) => pickStartingFrame(id, s.nodes, s.edges));
+
+  // Refresh the playback URL on mount when we have a storagePath but no
+  // playable URL — handles canvases re-opened after the persisted signed
+  // URL expired. Also recovers when a stale URL is present but Veo's
+  // 4xx-prone CDN starts rejecting it.
+  const refreshedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!storagePath) return;
+    if (refreshedFor.current === storagePath) return;
+    if (outputUrl && outputUrl.startsWith('http')) return;
+    refreshedFor.current = storagePath;
+    (async () => {
+      try {
+        const res = await fetch('/api/videos/sign', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ storagePath }),
+        });
+        if (!res.ok) throw new Error(`sign failed (${res.status})`);
+        const { url } = (await res.json()) as { url: string };
+        flow.updateNodeData(id, { ...d, outputUrl: url });
+      } catch (err) {
+        console.error('[VideoGenNode] could not refresh signed URL:', err);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storagePath]);
 
   const setPrompt = (text: string) => flow.updateNodeData(id, { ...d, prompt: text });
   const setAspect = (a: '16:9' | '9:16' | '1:1') =>
@@ -65,9 +96,7 @@ export function VideoGenNode({ id, data, selected }: NodeProps) {
         startingImageDataUrl = startingFrame.dataUrl;
       } else if (startingFrame?.kind === 'video-gen') {
         setStatusMsg('Extracting last frame from upstream video…');
-        startingImageDataUrl = await extractLastFrame(
-          `data:${startingFrame.mimeType};base64,${startingFrame.videoBase64}`,
-        );
+        startingImageDataUrl = await extractLastFrame(startingFrame.videoUrl);
       }
 
       const res = await fetch('/api/generate/video', {
@@ -79,6 +108,7 @@ export function VideoGenNode({ id, data, selected }: NodeProps) {
           startingImageDataUrl,
           aspectRatio,
           durationSec,
+          canvasId,
           // Slim before shipping — without this the upstream ImageGen
           // output (~1–2MB base64) plus other media fields blow past
           // Vercel's 4.5MB request body limit. The starting image
@@ -104,8 +134,8 @@ export function VideoGenNode({ id, data, selected }: NodeProps) {
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
-      let videoBase64: string | null = null;
-      let mimeType = 'video/mp4';
+      let resultUrl: string | null = null;
+      let resultStoragePath: string | null = null;
 
       streamLoop: while (true) {
         const { done, value } = await reader.read();
@@ -117,7 +147,13 @@ export function VideoGenNode({ id, data, selected }: NodeProps) {
           const line = frame.replace(/^data:\s*/, '').trim();
           if (!line) continue;
           let event:
-            | { type: string; message?: string; error?: string; videoBase64?: string; mimeType?: string }
+            | {
+                type: string;
+                message?: string;
+                error?: string;
+                outputUrl?: string;
+                storagePath?: string;
+              }
             | null = null;
           try {
             event = JSON.parse(line);
@@ -127,9 +163,9 @@ export function VideoGenNode({ id, data, selected }: NodeProps) {
           if (!event) continue;
           if (event.type === 'status' && event.message) {
             setStatusMsg(event.message);
-          } else if (event.type === 'done' && event.videoBase64) {
-            videoBase64 = event.videoBase64;
-            if (event.mimeType) mimeType = event.mimeType;
+          } else if (event.type === 'done' && event.outputUrl && event.storagePath) {
+            resultUrl = event.outputUrl;
+            resultStoragePath = event.storagePath;
             break streamLoop;
           } else if (event.type === 'error') {
             throw new Error(event.error ?? 'Stream error');
@@ -137,17 +173,17 @@ export function VideoGenNode({ id, data, selected }: NodeProps) {
         }
       }
 
-      if (!videoBase64) {
+      if (!resultUrl || !resultStoragePath) {
         throw new Error('Video stream ended without a result.');
       }
 
-      // Persist the video as both a base64 stash (for later re-encode if
-      // needed) and a blob URL for immediate playback. We store the data
-      // URL on the node so it survives reload.
-      const dataUrl = `data:${mimeType};base64,${videoBase64}`;
+      // Store the storage path (durable identity) and the signed playback
+      // URL. The path survives signed-URL expiry; on next mount we re-sign
+      // via /api/videos/sign if the URL is gone or stale.
       flow.updateNodeData(id, {
         ...d,
-        outputUrl: dataUrl,
+        outputUrl: resultUrl,
+        storagePath: resultStoragePath,
         isGenerating: false,
         status: 'ready',
       });
@@ -332,7 +368,7 @@ function pickStartingFrame(
     const nextLayer: string[] = [];
     const imageGenHits: { dataUrl: string; label: string }[] = [];
     const imageHits: { dataUrl: string; label: string }[] = [];
-    const videoGenHits: { videoBase64: string; mimeType: string; label: string }[] = [];
+    const videoGenHits: { videoUrl: string; label: string }[] = [];
 
     for (const cur of layer) {
       for (const e of edges) {
@@ -358,14 +394,10 @@ function pickStartingFrame(
         } else if (k === 'video-gen') {
           const vg = node.data as unknown as VideoGenNodeData;
           if (vg.outputUrl) {
-            const m = vg.outputUrl.match(/^data:([^;]+);base64,(.+)$/);
-            if (m) {
-              videoGenHits.push({
-                videoBase64: m[2],
-                mimeType: m[1],
-                label: 'upstream video',
-              });
-            }
+            videoGenHits.push({
+              videoUrl: vg.outputUrl,
+              label: 'upstream video',
+            });
           }
         }
       }
