@@ -1,21 +1,7 @@
 import { useReactFlow } from '@xyflow/react';
 import { nanoid } from 'nanoid';
 import type { CanvasNode, NodeKind } from '@/lib/types';
-
-const SOURCE_KINDS: { kind: NodeKind; label: string; symbol: string }[] = [
-  { kind: 'youtube', label: 'YouTube', symbol: '▶' },
-  { kind: 'pdf', label: 'PDF', symbol: '⌹' },
-  { kind: 'url', label: 'URL', symbol: '↗' },
-  { kind: 'image', label: 'Image', symbol: '▢' },
-  { kind: 'text', label: 'Text', symbol: '¶' },
-];
-
-const CONSUMER_KINDS: { kind: NodeKind; label: string; symbol: string }[] = [
-  { kind: 'chat', label: 'Chat', symbol: '⌘' },
-  { kind: 'artifact', label: 'Artifact', symbol: '✦' },
-  { kind: 'image-gen', label: 'Image Gen', symbol: '◇' },
-  { kind: 'video-gen', label: 'Video Gen', symbol: '▷' },
-];
+import { SOURCE_KINDS, CONSUMER_KINDS, defaultData } from '@/lib/nodeFactory';
 
 interface ToolbarProps {
   onOpenDiscover?: () => void;
@@ -96,33 +82,4 @@ export function Toolbar({ onOpenDiscover }: ToolbarProps = {}) {
       </div>
     </div>
   );
-}
-
-function defaultData(kind: NodeKind) {
-  switch (kind) {
-    case 'youtube':
-      return { kind, status: 'idle' as const, url: '' };
-    case 'pdf':
-      return { kind, status: 'idle' as const };
-    case 'url':
-      return { kind, status: 'idle' as const, url: '' };
-    case 'image':
-      return { kind, status: 'idle' as const };
-    case 'text':
-      return { kind, status: 'idle' as const, content: '', title: 'Pasted text' };
-    case 'chat':
-      return { kind, status: 'idle' as const, messages: [] };
-    case 'artifact':
-      return { kind, status: 'idle' as const, template: 'youtube-script' as const };
-    case 'image-gen':
-      return { kind, status: 'idle' as const, prompt: '', aspectRatio: '1:1' as const };
-    case 'video-gen':
-      return {
-        kind,
-        status: 'idle' as const,
-        prompt: '',
-        aspectRatio: '16:9' as const,
-        durationSec: 8 as const,
-      };
-  }
 }

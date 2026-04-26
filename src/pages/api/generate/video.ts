@@ -61,6 +61,13 @@ export const POST: APIRoute = async ({ request }) => {
   const aspectRatio = body.aspectRatio ?? '16:9';
   const durationSec = body.durationSec ?? 8;
 
+  // Veo model name. Default to Veo 2 (widely available); set VEO_MODEL in
+  // env to use Veo 3 if your Gemini account has access. Common values:
+  //   veo-2.0-generate-001       (default — broadly available)
+  //   veo-3.0-generate-001       (preview availability)
+  //   veo-3.0-fast-generate-001  (cheaper Veo 3)
+  const veoModel = import.meta.env.VEO_MODEL || 'veo-2.0-generate-001';
+
   const ctx = walkContext(body.videoGenNodeId, body.nodes, body.edges);
   const fullPrompt = composePrompt(prompt, ctx);
 
@@ -82,7 +89,7 @@ export const POST: APIRoute = async ({ request }) => {
         send({ type: 'status', message: 'Starting Veo job…' });
 
         let operation = await ai.models.generateVideos({
-          model: 'veo-3.0-generate-preview',
+          model: veoModel,
           prompt: fullPrompt,
           ...(startingImage ? { image: startingImage } : {}),
           config: {
