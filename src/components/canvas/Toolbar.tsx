@@ -15,7 +15,11 @@ const CONSUMER_KINDS: { kind: NodeKind; label: string; symbol: string }[] = [
   { kind: 'artifact', label: 'Artifact', symbol: '✦' },
 ];
 
-export function Toolbar() {
+interface ToolbarProps {
+  onOpenDiscover?: () => void;
+}
+
+export function Toolbar({ onOpenDiscover }: ToolbarProps = {}) {
   const flow = useReactFlow();
 
   const handleAdd = (kind: NodeKind) => {
@@ -41,7 +45,28 @@ export function Toolbar() {
   return (
     <div className="fixed left-4 top-1/2 -translate-y-1/2 z-50">
       <div className="node-frame p-2 flex flex-col gap-1.5">
-        <div className="node-label px-1 pb-1 border-b border-ink-600 mb-1">sources</div>
+        {onOpenDiscover && (
+          <>
+            <div className="node-label px-1 pb-1 border-b border-ink-600 mb-1">discover</div>
+            <button
+              onClick={onOpenDiscover}
+              className="pill-btn flex items-center gap-2 justify-start min-w-[120px]"
+              title="Find trending videos in your niche"
+              style={{
+                borderColor: 'rgba(255,43,214,0.45)',
+                color: '#ff66e0',
+                boxShadow: '0 0 12px -2px rgba(255,43,214,0.4)',
+              }}
+            >
+              <span className="w-4 text-center">⚡</span>
+              <span>Trending</span>
+            </button>
+            <div className="node-label px-1 pt-2 pb-1 border-t border-ink-600 mt-1 mb-1">sources</div>
+          </>
+        )}
+        {!onOpenDiscover && (
+          <div className="node-label px-1 pb-1 border-b border-ink-600 mb-1">sources</div>
+        )}
         {SOURCE_KINDS.map((k) => (
           <button
             key={k.kind}
