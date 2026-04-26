@@ -9,7 +9,16 @@ import type { Node, Edge } from '@xyflow/react';
  * one-shot generation of long-form deliverables (scripts, lead magnets,
  * ad copy) using a template.
  */
-export type NodeKind = 'youtube' | 'pdf' | 'url' | 'image' | 'text' | 'chat' | 'artifact';
+export type NodeKind =
+  | 'youtube'
+  | 'pdf'
+  | 'url'
+  | 'image'
+  | 'text'
+  | 'chat'
+  | 'artifact'
+  | 'image-gen'
+  | 'video-gen';
 
 /**
  * Extraction status lives on the node itself so the UI can render
@@ -58,6 +67,10 @@ export interface ImageNodeData extends BaseNodeData {
   filename?: string;
   /** OCR'd / vision-described text lives in `content`. */
   thumbnailUrl?: string;
+  /** Persisted base64 data URL of the original image. Used by downstream
+   *  image-gen nodes as reference inputs across page refreshes. */
+  dataUrl?: string;
+  mimeType?: string;
 }
 
 export interface TextNodeData extends BaseNodeData {
@@ -106,6 +119,29 @@ export interface ArtifactNodeData extends BaseNodeData {
   autoGenerate?: boolean;
 }
 
+export interface ImageGenNodeData extends BaseNodeData {
+  kind: 'image-gen';
+  /** What the user wants generated. */
+  prompt?: string;
+  /** Generated image base64 data URL. Editable / replaceable. */
+  outputDataUrl?: string;
+  /** Aspect ratio hint passed to the model (1:1, 16:9, 9:16, etc). */
+  aspectRatio?: '1:1' | '16:9' | '9:16' | '4:3' | '3:4';
+  isGenerating?: boolean;
+}
+
+export interface VideoGenNodeData extends BaseNodeData {
+  kind: 'video-gen';
+  /** Motion description. */
+  prompt?: string;
+  /** Final video URL or data URL after generation. */
+  outputUrl?: string;
+  durationSec?: 5 | 8;
+  isGenerating?: boolean;
+  /** Set while polling Veo for completion. */
+  jobId?: string;
+}
+
 export type SourceNodeData =
   | YoutubeNodeData
   | PdfNodeData
@@ -113,7 +149,12 @@ export type SourceNodeData =
   | ImageNodeData
   | TextNodeData;
 
-export type CanvasNodeData = SourceNodeData | ChatNodeData | ArtifactNodeData;
+export type CanvasNodeData =
+  | SourceNodeData
+  | ChatNodeData
+  | ArtifactNodeData
+  | ImageGenNodeData
+  | VideoGenNodeData;
 
 export type CanvasNode = Node<CanvasNodeData>;
 export type CanvasEdge = Edge;
@@ -148,4 +189,6 @@ export const NODE_WIDTH = {
   text: 280,
   chat: 420,
   artifact: 480,
+  'image-gen': 360,
+  'video-gen': 380,
 } as const satisfies Record<NodeKind, number>;

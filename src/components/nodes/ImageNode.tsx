@@ -21,7 +21,18 @@ export function ImageNode({ id, data, selected }: NodeProps) {
 
   const handleExtract = async () => {
     if (!pendingFile) return;
-    flow.updateNodeData(id, { ...d, filename: pendingFile.name, thumbnailUrl, status: 'pending' });
+    // Persist a base64 data URL alongside the OCR text so downstream
+    // image-gen nodes can use this image as a reference even after a
+    // page reload (blob: URLs only live for one session).
+    const dataUrl = await fileToDataUrl(pendingFile);
+    flow.updateNodeData(id, {
+      ...d,
+      filename: pendingFile.name,
+      thumbnailUrl,
+      dataUrl,
+      mimeType: pendingFile.type || 'image/jpeg',
+      status: 'pending',
+    });
     await extractNode(id, flow, { kind: 'image', file: pendingFile });
   };
 
@@ -58,4 +69,13 @@ export function ImageNode({ id, data, selected }: NodeProps) {
       )}
     </NodeShell>
   );
+}
+
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 }

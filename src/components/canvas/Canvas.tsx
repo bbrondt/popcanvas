@@ -27,6 +27,7 @@ import { ImageNode } from '../nodes/ImageNode';
 import { TextNode } from '../nodes/TextNode';
 import { ChatNode } from '../nodes/ChatNode';
 import { ArtifactNode } from '../nodes/ArtifactNode';
+import { ImageGenNode } from '../nodes/ImageGenNode';
 
 const nodeTypes = {
   youtube: YoutubeNode,
@@ -36,6 +37,7 @@ const nodeTypes = {
   text: TextNode,
   chat: ChatNode,
   artifact: ArtifactNode,
+  'image-gen': ImageGenNode,
 };
 
 const edgeTypes = { default: CustomEdge };
