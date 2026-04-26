@@ -192,19 +192,36 @@ function sleep(ms: number) {
 }
 
 function composePrompt(userPrompt: string, ctx: ReturnType<typeof walkContext>): string {
-  const lines: string[] = [userPrompt];
+  const lines: string[] = [];
+  lines.push(userPrompt);
+
+  // Pull voiceover/dialogue out of any upstream artifact whose template is
+  // a script — Veo 3 reads the prompt verbatim for spoken lines.
+  const scriptArtifact = ctx.artifacts.find(
+    (a) => a.template?.includes('script') || a.template?.includes('email') || a.template === 'tweet-thread',
+  );
+  if (scriptArtifact?.output) {
+    lines.push('');
+    lines.push('--- script the character should deliver (use the spoken/voiceover lines verbatim) ---');
+    // Include up to ~4000 chars; longer scripts overflow Veo's prompt budget.
+    lines.push(scriptArtifact.output.slice(0, 4000));
+  }
+
+  // Other text-shaped context (sources, non-script artifacts) goes in as
+  // scene/setting guidance, lighter weight.
   const textSources = ctx.sources.filter((s) => s.kind !== 'image');
-  if (textSources.length > 0 || ctx.artifacts.length > 0) {
+  const otherArtifacts = ctx.artifacts.filter((a) => a !== scriptArtifact);
+  if (textSources.length > 0 || otherArtifacts.length > 0) {
     lines.push('');
     lines.push('--- additional context to inform the motion / scene ---');
   }
   for (const s of textSources) {
     if (s.status === 'ready' && s.content) {
-      lines.push(`[${s.kind}]: ${s.content.slice(0, 400)}`);
+      lines.push(`[${s.kind}]: ${s.content.slice(0, 600)}`);
     }
   }
-  for (const a of ctx.artifacts) {
-    if (a.output) lines.push(`[prior artifact (${a.template})]: ${a.output.slice(0, 400)}`);
+  for (const a of otherArtifacts) {
+    if (a.output) lines.push(`[prior artifact (${a.template})]: ${a.output.slice(0, 800)}`);
   }
   return lines.join('\n');
 }
