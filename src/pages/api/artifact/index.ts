@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { walkContext, buildSystemPrompt } from '@/lib/ai/prompt';
+import { walkContext, buildSystemPrompt, attachImagesToLastUserTurn } from '@/lib/ai/prompt';
 import { streamChat } from '@/lib/ai/anthropic';
 import { getTemplate } from '@/lib/ai/templates';
 import type { CanvasNode, CanvasEdge, ArtifactTemplateId } from '@/lib/types';
@@ -32,17 +32,17 @@ export const POST: APIRoute = async ({ request }) => {
   }
 
   let systemPrompt: string;
-  let userMessage: string;
+  let messages: ReturnType<typeof attachImagesToLastUserTurn>;
   let maxTokens: number;
   try {
     const context = walkContext(body.artifactNodeId, body.nodes, body.edges);
     const upstreamCount =
-      context.sources.length + context.chats.length + context.artifacts.length;
+      context.sources.length + context.chats.length + context.artifacts.length + context.images.length;
     if (upstreamCount === 0) {
       return Response.json(
         {
           error:
-            'Connect at least one upstream node (source, chat, or prior artifact) before generating.',
+            'Connect at least one upstream node (source, chat, prior artifact, or image) before generating.',
         },
         { status: 400 },
       );
@@ -52,6 +52,7 @@ export const POST: APIRoute = async ({ request }) => {
     const tpl = getTemplate(body.template);
     maxTokens = tpl.maxTokens;
 
+    let userMessage: string;
     if (tpl.id === 'custom') {
       const custom = (body.customInstructions ?? '').trim();
       if (!custom) {
@@ -64,6 +65,10 @@ export const POST: APIRoute = async ({ request }) => {
     } else {
       userMessage = tpl.userInstructions;
     }
+    messages = attachImagesToLastUserTurn(
+      [{ role: 'user', content: userMessage }],
+      context.images,
+    );
   } catch (err) {
     return logAndFail('artifact:prompt', err);
   }
@@ -74,7 +79,7 @@ export const POST: APIRoute = async ({ request }) => {
       try {
         await streamChat({
           systemPrompt,
-          messages: [{ role: 'user', content: userMessage }],
+          messages,
           maxTokens,
           onText: (chunk) => {
             controller.enqueue(

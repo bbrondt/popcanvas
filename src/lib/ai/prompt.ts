@@ -4,6 +4,8 @@ import type {
   SourceNodeData,
   ChatNodeData,
   ArtifactNodeData,
+  ImageGenNodeData,
+  ImageNodeData,
 } from '../types';
 import { TEMPLATES } from './templates';
 
@@ -22,10 +24,25 @@ import { TEMPLATES } from './templates';
  * of a source, the artifact should still see the source. The same applies
  * for chained artifacts (artifact A's output feeds into artifact B).
  */
+
+export type ClaudeImageMime = 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+
+export interface ContextImage {
+  /** raw base64 (no data: prefix) — what Anthropic's API expects */
+  base64: string;
+  mimeType: ClaudeImageMime;
+  /** human label so Claude can refer to it ("the generated image", "the
+   *  uploaded photo named foo.jpg", etc) */
+  alt: string;
+}
+
 export interface ContextWalk {
   sources: SourceNodeData[];
   chats: ChatNodeData[];
   artifacts: ArtifactNodeData[];
+  /** Image bytes that should be attached to Claude's message as multimodal
+   *  inputs — collected from Image source nodes and ImageGen nodes. */
+  images: ContextImage[];
 }
 
 export function walkContext(
@@ -40,6 +57,7 @@ export function walkContext(
   const sources: SourceNodeData[] = [];
   const chats: ChatNodeData[] = [];
   const artifacts: ArtifactNodeData[] = [];
+  const images: ContextImage[] = [];
 
   while (queue.length > 0) {
     const current = queue.shift()!;
@@ -55,13 +73,44 @@ export function walkContext(
         chats.push(node.data as ChatNodeData);
       } else if (kind === 'artifact') {
         artifacts.push(node.data as ArtifactNodeData);
-      } else if (kind && kind !== 'chat' && kind !== 'artifact') {
+      } else if (kind === 'image-gen') {
+        const ig = node.data as unknown as ImageGenNodeData;
+        const img = parseDataUrlToContextImage(ig.outputDataUrl, 'generated image');
+        if (img) images.push(img);
+      } else if (kind === 'image') {
+        const im = node.data as unknown as ImageNodeData;
+        const label = im.title || im.filename || 'uploaded image';
+        const img = parseDataUrlToContextImage(im.dataUrl, label);
+        if (img) images.push(img);
+        // Image sources also go in `sources` so their OCR text shows up in
+        // the system prompt — text and image are complementary.
+        sources.push(node.data as SourceNodeData);
+      } else if (kind && kind !== 'video-gen') {
         sources.push(node.data as SourceNodeData);
       }
     }
   }
 
-  return { sources, chats, artifacts };
+  return { sources, chats, artifacts, images };
+}
+
+function parseDataUrlToContextImage(
+  dataUrl: string | undefined,
+  alt: string,
+): ContextImage | null {
+  if (!dataUrl) return null;
+  const m = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+  if (!m) return null;
+  const mimeType = m[1];
+  if (
+    mimeType !== 'image/png' &&
+    mimeType !== 'image/jpeg' &&
+    mimeType !== 'image/gif' &&
+    mimeType !== 'image/webp'
+  ) {
+    return null;
+  }
+  return { base64: m[2], mimeType, alt };
 }
 
 /**
@@ -172,4 +221,44 @@ export function buildMessages(
   newUserMessage: string,
 ): { role: 'user' | 'assistant'; content: string }[] {
   return [...history, { role: 'user' as const, content: newUserMessage }];
+}
+
+type MultimodalBlock =
+  | { type: 'text'; text: string }
+  | {
+      type: 'image';
+      source: { type: 'base64'; media_type: ClaudeImageMime; data: string };
+    };
+
+export type MultimodalMessage =
+  | { role: 'user' | 'assistant'; content: string }
+  | { role: 'user' | 'assistant'; content: MultimodalBlock[] };
+
+/**
+ * Attach upstream image bytes to the latest user turn so Claude can SEE
+ * them. Without this, generated images and uploaded photos only show up
+ * as text references in the system prompt — Claude has no idea what they
+ * actually look like.
+ *
+ * Only the latest turn gets images. Past turns aren't re-attached on every
+ * send (each user turn would otherwise re-bill all images), but Anthropic's
+ * prompt cache makes redundant re-attaches cheap if we ever change that.
+ */
+export function attachImagesToLastUserTurn(
+  messages: { role: 'user' | 'assistant'; content: string }[],
+  images: ContextImage[],
+): MultimodalMessage[] {
+  if (images.length === 0) return messages;
+  const out: MultimodalMessage[] = messages.slice();
+  const lastIdx = out.length - 1;
+  const last = out[lastIdx];
+  if (!last || last.role !== 'user') return messages;
+  const userText = typeof last.content === 'string' ? last.content : '';
+  const blocks: MultimodalBlock[] = images.map((img) => ({
+    type: 'image' as const,
+    source: { type: 'base64' as const, media_type: img.mimeType, data: img.base64 },
+  }));
+  blocks.push({ type: 'text' as const, text: userText });
+  out[lastIdx] = { role: 'user', content: blocks };
+  return out;
 }

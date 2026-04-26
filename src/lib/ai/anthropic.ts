@@ -16,9 +16,22 @@ export interface ToolCallEvent {
   input: unknown;
 }
 
+export type ContentBlock =
+  | { type: 'text'; text: string }
+  | {
+      type: 'image';
+      source: {
+        type: 'base64';
+        media_type: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+        data: string;
+      };
+    };
+
+export type MessageContent = string | ContentBlock[];
+
 export interface StreamChatArgs {
   systemPrompt: string;
-  messages: { role: 'user' | 'assistant'; content: string }[];
+  messages: { role: 'user' | 'assistant'; content: MessageContent }[];
   onText: (chunk: string) => void;
   /** Called once per completed tool_use block. */
   onToolUse?: (call: ToolCallEvent) => void;
@@ -54,7 +67,10 @@ export async function streamChat({
       model,
       max_tokens: maxTokens,
       system: systemPrompt,
-      messages,
+      // Anthropic SDK accepts string OR ContentBlock[] for content; the
+      // SDK's narrower MessageParam type doesn't reflect that union as
+      // cleanly so we cast.
+      messages: messages as unknown as Parameters<typeof client.messages.stream>[0]['messages'],
       ...(tools && tools.length > 0 ? { tools } : {}),
     })
     .on('text', (text) => {
