@@ -116,7 +116,7 @@ export function ChatNode({ id, data, selected }: NodeProps) {
             // Claude wants to spawn an asset. Create the artifact node now
             // and connect it to this chat (and to the same sources). It
             // auto-generates as soon as it mounts.
-            handleToolUse(event as { name: string; input: unknown });
+            handleToolUse(event as unknown as { name: string; input: unknown });
           } else if (event.type === 'error') {
             // Server-side stream error. Stop reading and bubble up to the
             // outer catch with the actual message instead of swallowing it.
@@ -200,7 +200,6 @@ export function ChatNode({ id, data, selected }: NodeProps) {
     const customInstructions = input.instructions?.trim() || '';
 
     const allNodes = flow.getNodes();
-    const allEdges = flow.getEdges();
     const me = allNodes.find((n) => n.id === id);
     if (!me) return;
 
@@ -267,7 +266,7 @@ export function ChatNode({ id, data, selected }: NodeProps) {
       />
 
       <div className="border-t border-ink-600 pt-2">
-        {connectedSources.length > 0 && !isStreaming && (
+        {upstream.length > 0 && !isStreaming && (
           <QuickActions onPick={(prompt) => setDraft(prompt)} disabled={isStreaming} />
         )}
         <textarea
