@@ -156,6 +156,13 @@ export const POST: APIRoute = async ({ request }) => {
 
         if (isExtension) {
           const startUrl = `https://generativelanguage.googleapis.com/v1beta/models/${veoModel}:predictLongRunning?key=${apiKey}`;
+          // Send the bare minimum. Veo's extension endpoint inherits
+          // aspect ratio and personGeneration from the source clip,
+          // and rejects them when re-passed:
+          //   "allow_adult for personGeneration is currently not supported."
+          //   "`encoding` isn't supported by this model."
+          // The SDK's image-to-video path accepts both fields fine, so
+          // the extension endpoint surface is meaningfully narrower.
           const startBody = {
             instances: [
               {
@@ -165,8 +172,6 @@ export const POST: APIRoute = async ({ request }) => {
             ],
             parameters: {
               sampleCount: 1,
-              aspectRatio,
-              personGeneration: 'allow_adult',
             },
           };
           const startRes = await fetch(startUrl, {
