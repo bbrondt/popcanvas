@@ -1,6 +1,7 @@
-import { Handle, Position, useReactFlow } from '@xyflow/react';
+import { Handle, Position, useReactFlow, useStore } from '@xyflow/react';
 import type { ReactNode } from 'react';
 import type { ExtractionStatus } from '@/lib/types';
+import { AddNodeButton } from '../canvas/AddNodeButton';
 
 interface NodeShellProps {
   /** id is required when we want to render delete/move affordances. */
@@ -24,6 +25,15 @@ export function NodeShell({
   status,
   children,
 }: NodeShellProps) {
+  // Show + buttons only when the corresponding handle has no edge yet —
+  // once a handle is connected, the + would just visually overlap the line.
+  const inputConnected = useStore((s) =>
+    id ? s.edges.some((e) => e.target === id) : false,
+  );
+  const outputConnected = useStore((s) =>
+    id ? s.edges.some((e) => e.source === id) : false,
+  );
+
   return (
     <div
       className={`node-frame ${selected ? 'is-selected' : ''}`}
@@ -42,6 +52,12 @@ export function NodeShell({
           position={Position.Right}
           style={{ right: -5 }}
         />
+      )}
+      {id && inputHandle && !inputConnected && (
+        <AddNodeButton ownerId={id} direction="input" />
+      )}
+      {id && outputHandle && !outputConnected && (
+        <AddNodeButton ownerId={id} direction="output" />
       )}
       {id && selected && <DeleteNodeButton id={id} />}
       <div className="p-3">

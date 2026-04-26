@@ -53,17 +53,23 @@ export const POST: APIRoute = async ({ request }) => {
     maxTokens = tpl.maxTokens;
 
     let userMessage: string;
+    const extra = (body.customInstructions ?? '').trim();
     if (tpl.id === 'custom') {
-      const custom = (body.customInstructions ?? '').trim();
-      if (!custom) {
+      if (!extra) {
         return Response.json(
           { error: 'Custom template needs instructions. Type what you want Claude to produce.' },
           { status: 400 },
         );
       }
-      userMessage = custom;
+      userMessage = extra;
     } else {
-      userMessage = tpl.userInstructions;
+      // Named template: layer the user's extra direction on top of the
+      // template's baseline so they can iterate ("more aggressive",
+      // "swap the angle to first-time buyers") without losing the
+      // template's structural hints.
+      userMessage = extra
+        ? `${tpl.userInstructions}\n\n--- additional direction from the user ---\n${extra}`
+        : tpl.userInstructions;
     }
     messages = attachImagesToLastUserTurn(
       [{ role: 'user', content: userMessage }],

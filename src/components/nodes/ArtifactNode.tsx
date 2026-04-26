@@ -210,19 +210,23 @@ export function ArtifactNode({ id, data, selected }: NodeProps) {
           <p className="mt-1 text-[10px] font-mono text-bone-400">{tpl.description}</p>
         </label>
 
-        {template === 'custom' && (
-          <label className="block">
-            <span className="node-label opacity-60 block mb-1">custom instructions</span>
-            <textarea
-              value={customInstructions}
-              onChange={(e) => setCustomInstructions(e.target.value)}
-              disabled={isGenerating}
-              placeholder="Tell Claude what to produce. Be specific about format, length, tone, structure."
-              rows={4}
-              className="nodrag w-full bg-ink-900 border border-ink-600 px-2 py-1.5 text-xs font-mono text-bone-100 focus:border-ember outline-none rounded-sm resize-y"
-            />
-          </label>
-        )}
+        <label className="block">
+          <span className="node-label opacity-60 block mb-1">
+            {template === 'custom' ? 'custom instructions' : 'extra direction (optional)'}
+          </span>
+          <textarea
+            value={customInstructions}
+            onChange={(e) => setCustomInstructions(e.target.value)}
+            disabled={isGenerating}
+            placeholder={
+              template === 'custom'
+                ? 'Tell Claude what to produce. Be specific about format, length, tone, structure.'
+                : 'Layer on top of the template. e.g. "first-time homebuyers, more aggressive tone, lead with the loan size".'
+            }
+            rows={template === 'custom' ? 4 : 3}
+            className="nodrag w-full bg-ink-900 border border-ink-600 px-2 py-1.5 text-xs font-mono text-bone-100 focus:border-ember outline-none rounded-sm resize-y"
+          />
+        </label>
       </div>
 
       <button
