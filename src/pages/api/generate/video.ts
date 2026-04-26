@@ -172,10 +172,26 @@ export const POST: APIRoute = async ({ request }) => {
           let detail: string;
           const opErrMsg =
             typeof operation.error?.message === 'string' ? operation.error.message : '';
+          const reasonsBlob = raiReasons.join('; ').toLowerCase();
+          // Veo's celebrity-likeness classifier false-positives constantly
+          // on AI-generated portraits (the training set is celebrity-heavy
+          // so nearly any human-like face triggers it). Surface that as a
+          // distinct, actionable case — and tag it with "no-fallback:" so
+          // the client doesn't waste a second call on the same face.
+          const isCelebrityFilter =
+            reasonsBlob.includes('celebrity') || reasonsBlob.includes('likeness');
           if (opErrMsg) {
             detail = opErrMsg;
+          } else if (isCelebrityFilter) {
+            detail =
+              "no-fallback: Veo's celebrity-likeness filter blocked the output. " +
+              "This is a common false positive on AI-generated faces — your " +
+              "subject doesn't have to actually be a celebrity to trip it. " +
+              'Regenerate the upstream image with explicit "fictional original ' +
+              "character\" wording, switch the image-gen model (toggle on the " +
+              'ImageGen node), or vary the face (different hair/age/features).';
           } else if (raiReasons.length > 0) {
-            detail = `Veo's safety filter blocked the output (${raiReasons.join('; ')}). Try a less violent / brand-named prompt.`;
+            detail = `Veo's safety filter blocked the output (${raiReasons.join('; ')}). Try a less brand-named / charged prompt.`;
           } else if (raiCount > 0) {
             detail = `Veo's safety filter blocked ${raiCount} candidate${raiCount === 1 ? '' : 's'}. Try a different prompt.`;
           } else if (isExtension) {
