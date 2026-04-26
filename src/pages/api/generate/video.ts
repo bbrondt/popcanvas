@@ -163,15 +163,20 @@ export const POST: APIRoute = async ({ request }) => {
           //   "`encoding` isn't supported by this model."
           // The SDK's image-to-video path accepts both fields fine, so
           // the extension endpoint surface is meaningfully narrower.
+          //
+          // Resolution does need to be set explicitly though — extension
+          // defaults to 720p which produces a visible quality drop
+          // against a 1080p source. 1080p is the published cap.
           const startBody = {
             instances: [
               {
-                prompt: fullPrompt,
+                prompt: anchorExtensionPrompt(fullPrompt),
                 video: { uri: body.extendFromVeoRef!.uri },
               },
             ],
             parameters: {
               sampleCount: 1,
+              resolution: '1080p',
             },
           };
           const startRes = await fetch(startUrl, {
@@ -416,6 +421,29 @@ function parseDataUrl(url: string): { mimeType: string; data: string } | null {
 
 function sleep(ms: number) {
   return new Promise<void>((r) => setTimeout(r, ms));
+}
+
+/**
+ * When extending, Veo treats the user prompt as a fresh creative
+ * instruction and can drift toward a stylized look — even when the
+ * source clip is hyper-realistic. Anchor the prompt with explicit
+ * "match prior style" language so the output stays visually
+ * consistent with the source. This is what Flow does internally;
+ * we have to do it ourselves on the API.
+ */
+function anchorExtensionPrompt(userPrompt: string): string {
+  return [
+    '[CONTINUATION DIRECTIVE]',
+    'This is a direct continuation of the prior video clip. Maintain the',
+    'EXACT same visual style, photorealism level, lighting, color grading,',
+    'character appearance, wardrobe, and environment as the source clip.',
+    'Do not stylize, animate, or shift toward a cartoon/illustrated look —',
+    'preserve the photographic, hyper-realistic quality of the source.',
+    'Camera, framing, and motion should flow naturally from the prior clip.',
+    '',
+    '[NEW ACTION FOR THIS SEGMENT]',
+    userPrompt,
+  ].join('\n');
 }
 
 function composePrompt(userPrompt: string, ctx: ReturnType<typeof walkContext>): string {
