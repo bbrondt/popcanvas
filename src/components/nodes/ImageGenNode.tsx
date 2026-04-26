@@ -2,9 +2,27 @@ import { useState } from 'react';
 import { useReactFlow, useStore, type NodeProps } from '@xyflow/react';
 import { NodeShell } from './NodeShell';
 import { slimNodesForApi } from '@/lib/slimPayload';
-import { NODE_WIDTH, type ImageGenNodeData, type ImageNodeData } from '@/lib/types';
+import {
+  NODE_WIDTH,
+  type ImageGenModel,
+  type ImageGenNodeData,
+  type ImageNodeData,
+} from '@/lib/types';
 
 const ASPECTS: NonNullable<ImageGenNodeData['aspectRatio']>[] = ['1:1', '16:9', '9:16', '4:3', '3:4'];
+
+const MODELS: { id: ImageGenModel; label: string; hint: string }[] = [
+  {
+    id: 'nano-banana',
+    label: 'nano',
+    hint: 'gemini 2.5 flash image — fast, cheap, strong on multi-reference editing',
+  },
+  {
+    id: 'gpt-image-2',
+    label: 'gpt-2',
+    hint: 'openai gpt-image-2 — pricier, best prompt adherence + text rendering',
+  },
+];
 
 export function ImageGenNode({ id, data, selected }: NodeProps) {
   const d = data as ImageGenNodeData;
@@ -15,6 +33,7 @@ export function ImageGenNode({ id, data, selected }: NodeProps) {
   const prompt = d.prompt ?? '';
   const output = d.outputDataUrl;
   const aspect = d.aspectRatio ?? '1:1';
+  const model: ImageGenModel = d.model ?? 'nano-banana';
 
   const upstreamImages = useStore((s) => {
     // Find every connected image source (transitive), pull dataUrls.
@@ -42,6 +61,7 @@ export function ImageGenNode({ id, data, selected }: NodeProps) {
   const setPrompt = (text: string) => flow.updateNodeData(id, { ...d, prompt: text });
   const setAspect = (a: NonNullable<ImageGenNodeData['aspectRatio']>) =>
     flow.updateNodeData(id, { ...d, aspectRatio: a });
+  const setModel = (m: ImageGenModel) => flow.updateNodeData(id, { ...d, model: m });
 
   const generate = async () => {
     if (isGenerating) return;
@@ -61,6 +81,7 @@ export function ImageGenNode({ id, data, selected }: NodeProps) {
           imageGenNodeId: id,
           prompt: prompt.trim(),
           aspectRatio: aspect,
+          model,
           // References travel as their own array; the slim nodes carry
           // text-shaped context only. Same reason as VideoGen — keeps
           // the request body under Vercel's 4.5MB cap.
@@ -167,6 +188,22 @@ export function ImageGenNode({ id, data, selected }: NodeProps) {
         rows={3}
         className="nodrag w-full bg-ink-900 border border-ink-600 px-2 py-1.5 text-xs font-mono text-bone-100 focus:border-ember outline-none rounded-md resize-y mb-2"
       />
+
+      <div className="flex items-center gap-1.5 mb-2">
+        <span className="node-label opacity-60">model</span>
+        {MODELS.map((m) => (
+          <button
+            key={m.id}
+            onClick={() => setModel(m.id)}
+            disabled={isGenerating}
+            title={m.hint}
+            className={`pill-btn text-[10px] py-1 px-2 ${m.id === model ? 'border-ember text-ember' : ''}`}
+            style={m.id === model ? { boxShadow: '0 0 8px -2px rgba(0,229,255,0.5)' } : undefined}
+          >
+            {m.label}
+          </button>
+        ))}
+      </div>
 
       <div className="flex items-center gap-1.5 mb-2">
         <span className="node-label opacity-60">aspect</span>
