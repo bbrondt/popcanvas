@@ -236,31 +236,57 @@ export function VideoGenNode({ id, data, selected }: NodeProps) {
     try {
       let result: Awaited<ReturnType<typeof runGeneration>> | null = null;
 
+      // Loud debug logging so the user can open the browser console and
+      // see exactly which path is firing without parsing the Network tab.
+      console.info(
+        '%c[VideoGen] starting generation',
+        'color:#00e5ff;font-weight:bold',
+        {
+          startingFrameKind: startingFrame?.kind ?? 'none (text-to-video)',
+          upstreamHasVeoRef: startingFrame?.kind === 'video-gen-extend',
+          upstreamLabel: startingFrame?.label,
+        },
+      );
+
       if (startingFrame?.kind === 'video-gen-extend') {
         // Native Veo extension — preserves motion. If Veo rejects the
         // source (TTL elapsed, ref invalid), drop down to last-frame
         // image-to-video so the user still gets a clip.
         try {
+          console.info('%c[VideoGen] PATH: native Veo extension', 'color:#9b87ff;font-weight:bold');
           setStatusMsg('Asking Veo to extend the prior clip…');
           result = await runGeneration({ kind: 'extend', veoRef: startingFrame.veoRef });
+          console.info('%c[VideoGen] extension SUCCEEDED', 'color:#5dd39e;font-weight:bold');
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           if (looksLikeExtendSourceFailure(msg)) {
-            console.warn('[VideoGenNode] extend failed, falling back to last-frame:', msg);
+            console.warn(
+              '%c[VideoGen] extension failed → falling back to last-frame:',
+              'color:#ff9b3f;font-weight:bold',
+              msg,
+            );
             setStatusMsg('Veo source expired — falling back to last frame…');
             const startingImageDataUrl = await extractLastFrame(startingFrame.videoUrl);
             result = await runGeneration({ kind: 'image', startingImageDataUrl });
           } else {
+            console.error('%c[VideoGen] extension failed (no fallback):', 'color:#ff5f5f;font-weight:bold', msg);
             throw err;
           }
         }
       } else {
         let startingImageDataUrl: string | undefined;
         if (startingFrame?.kind === 'image' || startingFrame?.kind === 'image-gen') {
+          console.info('%c[VideoGen] PATH: image-to-video (from ImageGen/Image)', 'color:#9b87ff;font-weight:bold');
           startingImageDataUrl = startingFrame.dataUrl;
         } else if (startingFrame?.kind === 'video-gen') {
+          console.info(
+            '%c[VideoGen] PATH: last-frame image-to-video (upstream VideoGen has no fresh veoVideoRef)',
+            'color:#ff9b3f;font-weight:bold',
+          );
           setStatusMsg('Extracting last frame from upstream video…');
           startingImageDataUrl = await extractLastFrame(startingFrame.videoUrl);
+        } else {
+          console.info('%c[VideoGen] PATH: text-to-video (no upstream)', 'color:#9b87ff;font-weight:bold');
         }
         result = await runGeneration({ kind: 'image', startingImageDataUrl });
       }
