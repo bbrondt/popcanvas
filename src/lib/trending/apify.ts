@@ -67,7 +67,9 @@ export async function searchTikTokTrending(
     'clockworks/tiktok-scraper',
     {
       searchQueries: [query],
-      resultsPerPage: Math.min(limit, 20),
+      // Pull a wider net than `limit` so client-side engagement+recency
+      // filtering still leaves us with enough good ones.
+      resultsPerPage: Math.min(limit * 4, 50),
       shouldDownloadVideos: false,
       shouldDownloadCovers: false,
       shouldDownloadSubtitles: false,
@@ -75,20 +77,34 @@ export async function searchTikTokTrending(
     apiToken,
   );
 
-  return items
-    .filter((it) => !!it.webVideoUrl)
-    .slice(0, limit)
-    .map((it) => ({
-      platform: 'tiktok' as const,
-      url: it.webVideoUrl!,
-      title: (it.text ?? 'TikTok').slice(0, 120) || 'TikTok',
-      thumbnail: it.videoMeta?.coverUrl ?? it.videoMeta?.originalCoverUrl,
-      author: it.authorMeta?.nickName ?? it.authorMeta?.name,
-      views: it.playCount,
-      likes: it.diggCount,
-      publishedAt: it.createTimeISO,
-      description: it.text?.slice(0, 280),
-    }));
+  // Filter: must have a URL, at least 1k plays, and be recent (90d).
+  const cutoff = Date.now() - 90 * 24 * 60 * 60 * 1000;
+  const filtered = items.filter((it) => {
+    if (!it.webVideoUrl) return false;
+    if ((it.playCount ?? 0) < 1000) return false;
+    if (it.createTimeISO) {
+      const t = new Date(it.createTimeISO).getTime();
+      if (Number.isFinite(t) && t < cutoff) return false;
+    }
+    return true;
+  });
+
+  // Sort by play count descending so the top of the list is what's actually
+  // ranking — TikTok's keyword search alone returns a mix of recency and
+  // popularity that surfaces a lot of low-engagement junk.
+  filtered.sort((a, b) => (b.playCount ?? 0) - (a.playCount ?? 0));
+
+  return filtered.slice(0, limit).map((it) => ({
+    platform: 'tiktok' as const,
+    url: it.webVideoUrl!,
+    title: (it.text ?? 'TikTok').slice(0, 120) || 'TikTok',
+    thumbnail: it.videoMeta?.coverUrl ?? it.videoMeta?.originalCoverUrl,
+    author: it.authorMeta?.nickName ?? it.authorMeta?.name,
+    views: it.playCount,
+    likes: it.diggCount,
+    publishedAt: it.createTimeISO,
+    description: it.text?.slice(0, 280),
+  }));
 }
 
 /**
@@ -119,34 +135,48 @@ export async function searchInstagramTrending(
   limit: number,
   apiToken: string,
 ): Promise<TrendingResult[]> {
-  // Strip non-alphanumeric and use first hashtag-friendly token.
   const hashtag = query.toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 60) || query.toLowerCase();
   const items = await runActorSync<InstagramItem>(
     'apify/instagram-hashtag-scraper',
     {
       hashtags: [hashtag],
-      resultsLimit: Math.min(limit, 20),
+      resultsLimit: Math.min(limit * 4, 50),
       resultsType: 'posts',
     },
     apiToken,
   );
 
-  return items
-    .filter((it) => !!(it.url ?? it.shortCode))
-    .slice(0, limit)
-    .map((it) => {
-      const url = it.url ?? `https://www.instagram.com/p/${it.shortCode}/`;
-      const title = (it.caption ?? '').slice(0, 120) || `@${it.ownerUsername ?? 'instagram'}`;
-      return {
-        platform: 'instagram' as const,
-        url,
-        title,
-        thumbnail: it.displayUrl,
-        author: it.ownerUsername,
-        views: it.videoViewCount,
-        likes: it.likesCount,
-        publishedAt: it.timestamp,
-        description: it.caption?.slice(0, 280),
-      };
-    });
+  // Filter: must have URL, ≥100 likes, and be recent (90d).
+  const cutoff = Date.now() - 90 * 24 * 60 * 60 * 1000;
+  const filtered = items.filter((it) => {
+    if (!(it.url ?? it.shortCode)) return false;
+    if ((it.likesCount ?? 0) < 100) return false;
+    if (it.timestamp) {
+      const t = new Date(it.timestamp).getTime();
+      if (Number.isFinite(t) && t < cutoff) return false;
+    }
+    return true;
+  });
+
+  // Rank by views (for Reels) falling back to likes.
+  filtered.sort(
+    (a, b) =>
+      (b.videoViewCount ?? b.likesCount ?? 0) - (a.videoViewCount ?? a.likesCount ?? 0),
+  );
+
+  return filtered.slice(0, limit).map((it) => {
+    const url = it.url ?? `https://www.instagram.com/p/${it.shortCode}/`;
+    const title = (it.caption ?? '').slice(0, 120) || `@${it.ownerUsername ?? 'instagram'}`;
+    return {
+      platform: 'instagram' as const,
+      url,
+      title,
+      thumbnail: it.displayUrl,
+      author: it.ownerUsername,
+      views: it.videoViewCount,
+      likes: it.likesCount,
+      publishedAt: it.timestamp,
+      description: it.caption?.slice(0, 280),
+    };
+  });
 }
