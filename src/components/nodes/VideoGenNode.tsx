@@ -301,14 +301,23 @@ export function VideoGenNode({ id, data, selected }: NodeProps) {
 
 /**
  * Look at upstream nodes (BFS, transitive — not just hop=1) and pick the
- * closest usable starting frame. Preference order at each hop level:
- *   ImageGen output > Image source > VideoGen last frame.
+ * closest usable starting frame.
  *
  * Walking transitively means a chain like
  *   [Image source] → [Chat] → [Artifact] → [VideoGen]
  * still finds the image even though there are two non-image nodes in
  * between. Without this you'd have to manually wire the image directly
  * into the VideoGen, which defeats the point of chaining.
+ *
+ * Crucially the walk is *layer by layer*: as soon as one hop level yields
+ * any usable frame, we stop. Otherwise a chain like
+ *   [ImageGen] → [VideoGen1] → [VideoGen2]
+ * would prefer the original ImageGen (2 hops, but high kind-priority) over
+ * VideoGen1's last frame (1 hop) and break VideoGen→VideoGen extension.
+ *
+ * Within a single layer, when multiple kinds tie, prefer VideoGen so a
+ * directly-wired upstream video drives extension, with ImageGen and Image
+ * as fallbacks for fresh starts.
  */
 function pickStartingFrame(
   consumerId: string,
@@ -317,62 +326,58 @@ function pickStartingFrame(
 ): StartingFrameSource {
   const nodeById = new Map(nodes.map((n) => [n.id, n]));
   const visited = new Set<string>([consumerId]);
-  const queue: string[] = [consumerId];
+  let layer: string[] = [consumerId];
 
-  // Collect every reachable upstream node, grouped by category, preserving
-  // BFS order (closer first). After the walk we pick the highest-priority
-  // category that has any entry.
-  const imageGenHits: { dataUrl: string; label: string }[] = [];
-  const imageHits: { dataUrl: string; label: string }[] = [];
-  const videoGenHits: { videoBase64: string; mimeType: string; label: string }[] = [];
+  while (layer.length > 0) {
+    const nextLayer: string[] = [];
+    const imageGenHits: { dataUrl: string; label: string }[] = [];
+    const imageHits: { dataUrl: string; label: string }[] = [];
+    const videoGenHits: { videoBase64: string; mimeType: string; label: string }[] = [];
 
-  while (queue.length > 0) {
-    const cur = queue.shift()!;
-    for (const e of edges) {
-      if (e.target !== cur || visited.has(e.source)) continue;
-      visited.add(e.source);
-      queue.push(e.source);
-      const node = nodeById.get(e.source);
-      if (!node) continue;
-      const k = node.data?.kind;
-      if (k === 'image-gen') {
-        const ig = node.data as unknown as ImageGenNodeData;
-        if (ig.outputDataUrl) {
-          imageGenHits.push({ dataUrl: ig.outputDataUrl, label: 'generated image' });
-        }
-      } else if (k === 'image') {
-        const im = node.data as unknown as ImageNodeData;
-        if (im.dataUrl) {
-          imageHits.push({
-            dataUrl: im.dataUrl,
-            label: im.title ?? im.filename ?? 'image source',
-          });
-        }
-      } else if (k === 'video-gen') {
-        const vg = node.data as unknown as VideoGenNodeData;
-        if (vg.outputUrl) {
-          const m = vg.outputUrl.match(/^data:([^;]+);base64,(.+)$/);
-          if (m) {
-            videoGenHits.push({
-              videoBase64: m[2],
-              mimeType: m[1],
-              label: 'upstream video',
+    for (const cur of layer) {
+      for (const e of edges) {
+        if (e.target !== cur || visited.has(e.source)) continue;
+        visited.add(e.source);
+        nextLayer.push(e.source);
+        const node = nodeById.get(e.source);
+        if (!node) continue;
+        const k = node.data?.kind;
+        if (k === 'image-gen') {
+          const ig = node.data as unknown as ImageGenNodeData;
+          if (ig.outputDataUrl) {
+            imageGenHits.push({ dataUrl: ig.outputDataUrl, label: 'generated image' });
+          }
+        } else if (k === 'image') {
+          const im = node.data as unknown as ImageNodeData;
+          if (im.dataUrl) {
+            imageHits.push({
+              dataUrl: im.dataUrl,
+              label: im.title ?? im.filename ?? 'image source',
             });
+          }
+        } else if (k === 'video-gen') {
+          const vg = node.data as unknown as VideoGenNodeData;
+          if (vg.outputUrl) {
+            const m = vg.outputUrl.match(/^data:([^;]+);base64,(.+)$/);
+            if (m) {
+              videoGenHits.push({
+                videoBase64: m[2],
+                mimeType: m[1],
+                label: 'upstream video',
+              });
+            }
           }
         }
       }
     }
+
+    if (videoGenHits.length > 0) return { kind: 'video-gen', ...videoGenHits[0] };
+    if (imageGenHits.length > 0) return { kind: 'image-gen', ...imageGenHits[0] };
+    if (imageHits.length > 0) return { kind: 'image', ...imageHits[0] };
+
+    layer = nextLayer;
   }
 
-  if (imageGenHits.length > 0) {
-    return { kind: 'image-gen', ...imageGenHits[0] };
-  }
-  if (imageHits.length > 0) {
-    return { kind: 'image', ...imageHits[0] };
-  }
-  if (videoGenHits.length > 0) {
-    return { kind: 'video-gen', ...videoGenHits[0] };
-  }
   return null;
 }
 
