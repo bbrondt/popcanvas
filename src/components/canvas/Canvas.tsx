@@ -19,6 +19,7 @@ import '@xyflow/react/dist/style.css';
 
 import { Toolbar } from './Toolbar';
 import { CustomEdge } from './CustomEdge';
+import { DiscoverPanel } from './DiscoverPanel';
 import { YoutubeNode } from '../nodes/YoutubeNode';
 import { PdfNode } from '../nodes/PdfNode';
 import { UrlNode } from '../nodes/UrlNode';
@@ -78,6 +79,7 @@ function CanvasInner({ canvasId }: CanvasProps) {
   const [edges, setEdges] = useState<Edge[]>([]);
   const [title, setTitle] = useState('Untitled canvas');
   const [loaded, setLoaded] = useState(false);
+  const [discoverOpen, setDiscoverOpen] = useState(false);
   const saveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Load on mount
@@ -142,7 +144,7 @@ function CanvasInner({ canvasId }: CanvasProps) {
   return (
     <div className="relative w-screen h-screen canvas-grid">
       <TitleBar title={title} onTitleChange={setTitle} canvasId={canvasId} />
-      <Toolbar />
+      <Toolbar onOpenDiscover={() => setDiscoverOpen(true)} />
 
       <ReactFlow
         nodes={nodes}
@@ -163,6 +165,8 @@ function CanvasInner({ canvasId }: CanvasProps) {
       </ReactFlow>
 
       {showEmptyHint && <EmptyHint hasSources={nodes.some((n) => n.data?.kind && n.data.kind !== 'chat')} />}
+
+      <DiscoverPanel open={discoverOpen} onClose={() => setDiscoverOpen(false)} />
     </div>
   );
 }

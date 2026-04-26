@@ -27,6 +27,8 @@ export const GET: APIRoute = async ({ url }) => {
     hasAssemblyAI: Boolean(import.meta.env.ASSEMBLYAI_API_KEY),
     hasYoutubeCookies: Boolean(import.meta.env.YT_COOKIES),
     hasSupadata: Boolean(import.meta.env.SUPADATA_API_KEY),
+    hasYoutubeApi: Boolean(import.meta.env.YOUTUBE_API_KEY),
+    hasApify: Boolean(import.meta.env.APIFY_API_TOKEN),
   };
 
   const result: Record<string, unknown> = { ok: true, env };
