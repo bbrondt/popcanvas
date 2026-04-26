@@ -450,6 +450,9 @@ export function VideoGenNode({ id, data, selected }: NodeProps) {
           <p className="mt-1.5 text-[10px] font-mono text-bone-400 leading-snug">
             connect this node's right ● into another video-gen node to extend the sequence — Veo continues this clip's motion (≈ 7s per hop, up to 148s). Older than ~2 days falls back to last-frame.
           </p>
+          <p className="mt-1 text-[10px] font-mono text-ember leading-snug">
+            ⚠ for dialogue continuity in the next clip, this clip MUST end with the character still speaking — Veo extension reads the last 1 second of audio to seed the next. If this clip ends in silence (e.g. character finished their sentence), the extension will switch to narrator voiceover. Veo API rule.
+          </p>
         </div>
       )}
 
