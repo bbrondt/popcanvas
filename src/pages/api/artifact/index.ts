@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { findConnectedSources, buildSystemPrompt } from '@/lib/ai/prompt';
+import { walkContext, buildSystemPrompt } from '@/lib/ai/prompt';
 import { streamChat } from '@/lib/ai/anthropic';
 import { getTemplate } from '@/lib/ai/templates';
 import type { CanvasNode, CanvasEdge, ArtifactTemplateId } from '@/lib/types';
@@ -35,15 +35,20 @@ export const POST: APIRoute = async ({ request }) => {
   let userMessage: string;
   let maxTokens: number;
   try {
-    const sources = findConnectedSources(body.artifactNodeId, body.nodes, body.edges);
-    if (sources.length === 0) {
+    const context = walkContext(body.artifactNodeId, body.nodes, body.edges);
+    const upstreamCount =
+      context.sources.length + context.chats.length + context.artifacts.length;
+    if (upstreamCount === 0) {
       return Response.json(
-        { error: 'Connect at least one source to the artifact node before generating.' },
+        {
+          error:
+            'Connect at least one upstream node (source, chat, or prior artifact) before generating.',
+        },
         { status: 400 },
       );
     }
 
-    systemPrompt = buildSystemPrompt(sources);
+    systemPrompt = buildSystemPrompt(context);
     const tpl = getTemplate(body.template);
     maxTokens = tpl.maxTokens;
 

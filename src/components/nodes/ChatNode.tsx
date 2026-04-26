@@ -21,17 +21,10 @@ export function ChatNode({ id, data, selected }: NodeProps) {
   // once when the stream starts and once when it completes.
   const [isStreaming, setIsStreaming] = useState(false);
 
-  // Reactive: the row of "connected sources" updates as the user wires/unwires
-  // edges, without us having to re-poll. This is what's actually being passed
-  // to /api/chat as system-prompt context.
-  const connectedSources = useStore((s) => {
-    const incoming = new Set(
-      s.edges.filter((e) => e.target === id).map((e) => e.source),
-    );
-    return s.nodes
-      .filter((n) => incoming.has(n.id) && (n.data as { kind?: string })?.kind !== 'chat')
-      .map((n) => ({ id: n.id, data: n.data as SourceNodeData }));
-  });
+  // Reactive: the upstream context updates as edges are wired/unwired. This
+  // is the same transitive walk the server does, so the panel matches what
+  // Claude actually sees. Includes sources, prior chats, and prior artifacts.
+  const upstream = useStore((s) => walkUpstream(id, s.nodes, s.edges));
 
   const messages = d.messages ?? [];
 
@@ -232,21 +225,14 @@ export function ChatNode({ id, data, selected }: NodeProps) {
       } satisfies ArtifactNodeData,
     };
 
-    // Wire chat -> artifact, plus every source -> artifact so the new node
-    // has the same context as this chat.
+    // Single edge: chat -> artifact. The transitive context walk in
+    // walkContext means the artifact still inherits this chat's sources +
+    // history without us duplicating edges. The lineage stays clean:
+    //   source -> chat -> artifact
+    // so future artifacts spawned from the same chat all hang off the chat.
     const newEdges: Edge[] = [
       { id: `e-${id}-${artifactId}`, source: id, target: artifactId, animated: true },
     ];
-    for (const e of allEdges) {
-      if (e.target === id) {
-        newEdges.push({
-          id: `e-${e.source}-${artifactId}`,
-          source: e.source,
-          target: artifactId,
-          animated: true,
-        });
-      }
-    }
 
     flow.addNodes(artifactNode);
     flow.addEdges(newEdges);
@@ -258,7 +244,7 @@ export function ChatNode({ id, data, selected }: NodeProps) {
       selected={!!selected}
       width={NODE_WIDTH.chat}
       inputHandle
-      outputHandle={false}
+      outputHandle
       status={isStreaming ? 'pending' : 'ready'}
     >
       <div className="flex items-center justify-between mb-2">
@@ -268,14 +254,14 @@ export function ChatNode({ id, data, selected }: NodeProps) {
         </span>
       </div>
 
-      <ConnectedSources sources={connectedSources} />
+      <UpstreamPanel upstream={upstream} />
 
       <MessagesScroller
         messages={messages}
         streamingText={streamingText}
-        emptyHint={connectedSources.length === 0
+        emptyHint={upstream.length === 0
           ? 'Connect sources, then ask a question.'
-          : 'Ask a question about your sources.'}
+          : 'Ask a question about your context.'}
         error={!isStreaming ? d.error : undefined}
         onDismissError={() => flow.updateNodeData(id, { ...d, error: undefined })}
       />
@@ -427,55 +413,124 @@ function ChatError({ message, onDismiss }: { message: string; onDismiss: () => v
   );
 }
 
-function ConnectedSources({
-  sources,
-}: {
-  sources: { id: string; data: SourceNodeData }[];
-}) {
-  if (sources.length === 0) return null;
+// Local upstream walker — mirrors the server-side walkContext but returns
+// flat row entries the panel can render. Includes hop distance so we can
+// dim out further-upstream items so the user sees the lineage at a glance.
+type UpstreamItem =
+  | { id: string; kind: 'source'; data: SourceNodeData; hop: number }
+  | { id: string; kind: 'chat'; messageCount: number; hop: number }
+  | { id: string; kind: 'artifact'; template: string; status: string; hop: number };
+
+function walkUpstream(
+  consumerId: string,
+  nodes: { id: string; data: { kind?: string } & Record<string, unknown> }[],
+  edges: { source: string; target: string }[],
+): UpstreamItem[] {
+  const nodeById = new Map(nodes.map((n) => [n.id, n]));
+  const visited = new Set<string>([consumerId]);
+  const queue: { id: string; hop: number }[] = [{ id: consumerId, hop: 0 }];
+  const out: UpstreamItem[] = [];
+
+  while (queue.length > 0) {
+    const { id, hop } = queue.shift()!;
+    for (const e of edges) {
+      if (e.target !== id || visited.has(e.source)) continue;
+      visited.add(e.source);
+      const node = nodeById.get(e.source);
+      if (!node) continue;
+      const k = node.data?.kind;
+      const nextHop = hop + 1;
+      queue.push({ id: e.source, hop: nextHop });
+      if (k === 'chat') {
+        const c = node.data as unknown as ChatNodeData;
+        out.push({ id: e.source, kind: 'chat', messageCount: c.messages?.length ?? 0, hop: nextHop });
+      } else if (k === 'artifact') {
+        const a = node.data as unknown as { template: string; status: string };
+        out.push({ id: e.source, kind: 'artifact', template: a.template, status: a.status ?? 'idle', hop: nextHop });
+      } else if (k && k !== 'chat' && k !== 'artifact') {
+        out.push({ id: e.source, kind: 'source', data: node.data as unknown as SourceNodeData, hop: nextHop });
+      }
+    }
+  }
+  return out;
+}
+
+function UpstreamPanel({ upstream }: { upstream: UpstreamItem[] }) {
+  if (upstream.length === 0) return null;
+  const directCount = upstream.filter((u) => u.hop === 1).length;
+  const indirectCount = upstream.length - directCount;
   return (
     <div className="border-y border-ink-600 py-2 mb-2 -mx-1 px-1">
       <div className="node-label opacity-60 mb-1.5">
-        connected · {sources.length} {sources.length === 1 ? 'source' : 'sources'}
+        upstream context · {upstream.length}
+        {indirectCount > 0 && (
+          <span className="opacity-60"> ({directCount} direct, {indirectCount} via chain)</span>
+        )}
       </div>
       <div className="space-y-1">
-        {sources.map((s) => (
-          <SourceRow key={s.id} data={s.data} />
+        {upstream.map((u) => (
+          <UpstreamRow key={u.id} item={u} />
         ))}
       </div>
     </div>
   );
 }
 
-const KIND_SYMBOL: Record<SourceNodeData['kind'], string> = {
+const KIND_SYMBOL: Record<string, string> = {
   youtube: '▶',
   pdf: '⌹',
   url: '↗',
   image: '▢',
   text: '¶',
+  chat: '⌘',
+  artifact: '✦',
 };
 
-function SourceRow({ data }: { data: SourceNodeData }) {
-  const symbol = KIND_SYMBOL[data.kind] ?? '·';
-  const label =
-    data.title ||
-    ('url' in data && data.url) ||
-    ('filename' in data && data.filename) ||
-    data.kind;
-  const isReady = data.status === 'ready';
-  const statusColor =
-    data.status === 'error'
-      ? 'text-red-400'
-      : data.status === 'pending'
-        ? 'text-ember'
-        : isReady
-          ? 'text-moss'
-          : 'text-bone-400';
+function UpstreamRow({ item }: { item: UpstreamItem }) {
+  const dim = item.hop > 1 ? 'opacity-60' : '';
+  if (item.kind === 'source') {
+    const symbol = KIND_SYMBOL[item.data.kind] ?? '·';
+    const label =
+      item.data.title ||
+      ('url' in item.data && item.data.url) ||
+      ('filename' in item.data && item.data.filename) ||
+      item.data.kind;
+    const statusColor =
+      item.data.status === 'error'
+        ? 'text-red-400'
+        : item.data.status === 'pending'
+          ? 'text-ember'
+          : item.data.status === 'ready'
+            ? 'text-moss'
+            : 'text-bone-400';
+    return (
+      <div className={`flex items-center gap-2 text-[11px] font-mono ${dim}`}>
+        <span className="text-ember w-3 text-center flex-shrink-0">{symbol}</span>
+        <span className="text-bone-200 truncate flex-1">{String(label)}</span>
+        <span className={`${statusColor} flex-shrink-0 uppercase tracking-wider`}>{item.data.status}</span>
+      </div>
+    );
+  }
+  if (item.kind === 'chat') {
+    return (
+      <div className={`flex items-center gap-2 text-[11px] font-mono ${dim}`}>
+        <span className="text-ember w-3 text-center flex-shrink-0">{KIND_SYMBOL.chat}</span>
+        <span className="text-bone-200 truncate flex-1">prior chat</span>
+        <span className="text-bone-400 flex-shrink-0 uppercase tracking-wider">{item.messageCount} turns</span>
+      </div>
+    );
+  }
   return (
-    <div className="flex items-center gap-2 text-[11px] font-mono">
-      <span className="text-ember w-3 text-center flex-shrink-0">{symbol}</span>
-      <span className="text-bone-200 truncate flex-1">{label}</span>
-      <span className={`${statusColor} flex-shrink-0 uppercase tracking-wider`}>{data.status}</span>
+    <div className={`flex items-center gap-2 text-[11px] font-mono ${dim}`}>
+      <span className="text-neon w-3 text-center flex-shrink-0">{KIND_SYMBOL.artifact}</span>
+      <span className="text-bone-200 truncate flex-1">prior artifact ({item.template})</span>
+      <span
+        className={`flex-shrink-0 uppercase tracking-wider ${
+          item.status === 'ready' ? 'text-moss' : item.status === 'pending' ? 'text-ember' : 'text-bone-400'
+        }`}
+      >
+        {item.status}
+      </span>
     </div>
   );
 }

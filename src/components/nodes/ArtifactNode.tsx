@@ -28,14 +28,10 @@ export function ArtifactNode({ id, data, selected }: NodeProps) {
   const output = d.output ?? '';
   const tpl = getTemplate(template);
 
-  const connectedSources = useStore((s) => {
-    const incoming = new Set(
-      s.edges.filter((e) => e.target === id).map((e) => e.source),
-    );
-    return s.nodes
-      .filter((n) => incoming.has(n.id) && (n.data as { kind?: string })?.kind !== 'chat' && (n.data as { kind?: string })?.kind !== 'artifact')
-      .map((n) => ({ id: n.id, data: n.data as SourceNodeData }));
-  });
+  // Mirror the server's transitive walk so the panel shows the full lineage:
+  // direct sources, prior chats in the chain, prior artifacts feeding in.
+  const upstream = useStore((s) => walkArtifactUpstream(id, s.nodes, s.edges));
+  const upstreamCount = upstream.length;
 
   const setTemplate = (t: ArtifactTemplateId) => {
     flow.updateNodeData(id, { ...d, template: t });
@@ -64,8 +60,8 @@ export function ArtifactNode({ id, data, selected }: NodeProps) {
 
   const generate = async () => {
     if (isGenerating) return;
-    if (connectedSources.length === 0) {
-      setError('Connect at least one source to this node before generating.');
+    if (upstreamCount === 0) {
+      setError('Connect at least one upstream node (source, chat, or prior artifact) before generating.');
       return;
     }
     if (template === 'custom' && !customInstructions.trim()) {
@@ -186,7 +182,7 @@ export function ArtifactNode({ id, data, selected }: NodeProps) {
   const status = isGenerating ? 'pending' : output ? 'ready' : 'idle';
 
   return (
-    <NodeShell id={id} selected={!!selected} width={NODE_WIDTH.artifact} inputHandle outputHandle={false} status={status}>
+    <NodeShell id={id} selected={!!selected} width={NODE_WIDTH.artifact} inputHandle outputHandle status={status}>
       <div className="flex items-center justify-between mb-2">
         <span className="node-label">✦ artifact</span>
         <span className={`node-label ${isGenerating ? 'text-ember' : output ? 'text-moss' : 'text-bone-400'}`}>
@@ -194,7 +190,7 @@ export function ArtifactNode({ id, data, selected }: NodeProps) {
         </span>
       </div>
 
-      <ConnectedRow sources={connectedSources} />
+      <UpstreamPanel upstream={upstream} />
 
       <div className="space-y-2 mb-2">
         <label className="block">
@@ -231,9 +227,9 @@ export function ArtifactNode({ id, data, selected }: NodeProps) {
 
       <button
         onClick={generate}
-        disabled={isGenerating || connectedSources.length === 0}
+        disabled={isGenerating || upstreamCount === 0}
         className="pill-btn-primary w-full mb-2 disabled:opacity-40 disabled:cursor-not-allowed"
-        title={connectedSources.length === 0 ? 'Connect at least one source first' : ''}
+        title={upstreamCount === 0 ? 'Connect at least one upstream node first' : ''}
       >
         {isGenerating ? 'generating…' : output ? 'regenerate' : 'generate'}
       </button>
@@ -263,42 +259,126 @@ export function ArtifactNode({ id, data, selected }: NodeProps) {
   );
 }
 
-function ConnectedRow({ sources }: { sources: { id: string; data: SourceNodeData }[] }) {
-  if (sources.length === 0) {
+type UpstreamItem =
+  | { id: string; kind: 'source'; data: SourceNodeData; hop: number }
+  | { id: string; kind: 'chat'; messageCount: number; hop: number }
+  | { id: string; kind: 'artifact'; template: string; status: string; hop: number };
+
+function walkArtifactUpstream(
+  consumerId: string,
+  nodes: { id: string; data: { kind?: string } & Record<string, unknown> }[],
+  edges: { source: string; target: string }[],
+): UpstreamItem[] {
+  const nodeById = new Map(nodes.map((n) => [n.id, n]));
+  const visited = new Set<string>([consumerId]);
+  const queue: { id: string; hop: number }[] = [{ id: consumerId, hop: 0 }];
+  const out: UpstreamItem[] = [];
+  while (queue.length > 0) {
+    const { id, hop } = queue.shift()!;
+    for (const e of edges) {
+      if (e.target !== id || visited.has(e.source)) continue;
+      visited.add(e.source);
+      const node = nodeById.get(e.source);
+      if (!node) continue;
+      const k = node.data?.kind;
+      const nextHop = hop + 1;
+      queue.push({ id: e.source, hop: nextHop });
+      if (k === 'chat') {
+        const c = node.data as unknown as { messages?: { length: number }[] };
+        out.push({ id: e.source, kind: 'chat', messageCount: (c.messages?.length as unknown as number) ?? 0, hop: nextHop });
+      } else if (k === 'artifact') {
+        const a = node.data as unknown as { template: string; status: string };
+        out.push({ id: e.source, kind: 'artifact', template: a.template, status: a.status ?? 'idle', hop: nextHop });
+      } else if (k && k !== 'chat' && k !== 'artifact') {
+        out.push({ id: e.source, kind: 'source', data: node.data as unknown as SourceNodeData, hop: nextHop });
+      }
+    }
+  }
+  return out;
+}
+
+const KIND_SYMBOL: Record<string, string> = {
+  youtube: '▶',
+  pdf: '⌹',
+  url: '↗',
+  image: '▢',
+  text: '¶',
+  chat: '⌘',
+  artifact: '✦',
+};
+
+function UpstreamPanel({ upstream }: { upstream: UpstreamItem[] }) {
+  if (upstream.length === 0) {
     return (
       <div className="border-y border-ink-600 py-2 mb-2 -mx-1 px-1 text-[11px] font-mono text-bone-400 text-center">
-        no sources connected — drag from a source's right ● to this node's left ●
+        no upstream connected — drag from a source/chat/artifact's right ● to this node's left ●
+      </div>
+    );
+  }
+  const directCount = upstream.filter((u) => u.hop === 1).length;
+  const indirect = upstream.length - directCount;
+  return (
+    <div className="border-y border-ink-600 py-2 mb-2 -mx-1 px-1">
+      <div className="node-label opacity-60 mb-1.5">
+        upstream context · {upstream.length}
+        {indirect > 0 && (
+          <span className="opacity-60"> ({directCount} direct, {indirect} via chain)</span>
+        )}
+      </div>
+      <div className="space-y-1">
+        {upstream.map((u) => (
+          <UpstreamRow key={u.id} item={u} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function UpstreamRow({ item }: { item: UpstreamItem }) {
+  const dim = item.hop > 1 ? 'opacity-60' : '';
+  if (item.kind === 'source') {
+    const symbol = KIND_SYMBOL[item.data.kind] ?? '·';
+    const label =
+      item.data.title ||
+      ('url' in item.data && item.data.url) ||
+      ('filename' in item.data && item.data.filename) ||
+      item.data.kind;
+    const statusColor =
+      item.data.status === 'error'
+        ? 'text-red-400'
+        : item.data.status === 'pending'
+          ? 'text-ember'
+          : item.data.status === 'ready'
+            ? 'text-moss'
+            : 'text-bone-400';
+    return (
+      <div className={`flex items-center gap-2 text-[11px] font-mono ${dim}`}>
+        <span className="text-ember w-3 text-center flex-shrink-0">{symbol}</span>
+        <span className="text-bone-200 truncate flex-1">{String(label)}</span>
+        <span className={`${statusColor} flex-shrink-0 uppercase tracking-wider`}>{item.data.status}</span>
+      </div>
+    );
+  }
+  if (item.kind === 'chat') {
+    return (
+      <div className={`flex items-center gap-2 text-[11px] font-mono ${dim}`}>
+        <span className="text-ember w-3 text-center flex-shrink-0">{KIND_SYMBOL.chat}</span>
+        <span className="text-bone-200 truncate flex-1">prior chat</span>
+        <span className="text-bone-400 flex-shrink-0 uppercase tracking-wider">{item.messageCount} turns</span>
       </div>
     );
   }
   return (
-    <div className="border-y border-ink-600 py-2 mb-2 -mx-1 px-1">
-      <div className="node-label opacity-60 mb-1.5">
-        connected · {sources.length} {sources.length === 1 ? 'source' : 'sources'}
-      </div>
-      <div className="space-y-1">
-        {sources.map((s) => {
-          const label =
-            s.data.title ||
-            ('url' in s.data && s.data.url) ||
-            ('filename' in s.data && s.data.filename) ||
-            s.data.kind;
-          const statusColor =
-            s.data.status === 'error'
-              ? 'text-red-400'
-              : s.data.status === 'pending'
-                ? 'text-ember'
-                : s.data.status === 'ready'
-                  ? 'text-moss'
-                  : 'text-bone-400';
-          return (
-            <div key={s.id} className="flex items-center gap-2 text-[11px] font-mono">
-              <span className="text-bone-200 truncate flex-1">{String(label)}</span>
-              <span className={`${statusColor} flex-shrink-0 uppercase tracking-wider`}>{s.data.status}</span>
-            </div>
-          );
-        })}
-      </div>
+    <div className={`flex items-center gap-2 text-[11px] font-mono ${dim}`}>
+      <span className="text-neon w-3 text-center flex-shrink-0">{KIND_SYMBOL.artifact}</span>
+      <span className="text-bone-200 truncate flex-1">prior artifact ({item.template})</span>
+      <span
+        className={`flex-shrink-0 uppercase tracking-wider ${
+          item.status === 'ready' ? 'text-moss' : item.status === 'pending' ? 'text-ember' : 'text-bone-400'
+        }`}
+      >
+        {item.status}
+      </span>
     </div>
   );
 }
