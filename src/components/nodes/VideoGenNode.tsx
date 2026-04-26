@@ -284,12 +284,26 @@ export function VideoGenNode({ id, data, selected }: NodeProps) {
           </p>
         </div>
       )}
+
+      {!outputUrl && !isGenerating && (
+        <p className="mt-1 text-[10px] font-mono text-bone-400 leading-snug">
+          for talking avatars / lip-sync / audio: set <span className="text-ember">VEO_MODEL=veo-3.0-generate-001</span> in Vercel env. Veo 2 (default) is silent video only.
+        </p>
+      )}
     </NodeShell>
   );
 }
 
 /**
- * Look at direct upstream (hop=1) and pick the closest usable starting frame.
+ * Look at upstream nodes (BFS, transitive — not just hop=1) and pick the
+ * closest usable starting frame. Preference order at each hop level:
+ *   ImageGen output > Image source > VideoGen last frame.
+ *
+ * Walking transitively means a chain like
+ *   [Image source] → [Chat] → [Artifact] → [VideoGen]
+ * still finds the image even though there are two non-image nodes in
+ * between. Without this you'd have to manually wire the image directly
+ * into the VideoGen, which defeats the point of chaining.
  */
 function pickStartingFrame(
   consumerId: string,
@@ -297,55 +311,62 @@ function pickStartingFrame(
   edges: { source: string; target: string }[],
 ): StartingFrameSource {
   const nodeById = new Map(nodes.map((n) => [n.id, n]));
-  const incoming = edges.filter((e) => e.target === consumerId).map((e) => e.source);
+  const visited = new Set<string>([consumerId]);
+  const queue: string[] = [consumerId];
 
-  // Preference order: ImageGen output > Image source > VideoGen last frame.
-  for (const sid of incoming) {
-    const n = nodeById.get(sid);
-    const k = n?.data?.kind;
-    if (k === 'image-gen') {
-      const ig = n!.data as unknown as ImageGenNodeData;
-      if (ig.outputDataUrl) {
-        return {
-          kind: 'image-gen',
-          dataUrl: ig.outputDataUrl,
-          label: 'generated image',
-        };
-      }
-    }
-  }
-  for (const sid of incoming) {
-    const n = nodeById.get(sid);
-    const k = n?.data?.kind;
-    if (k === 'image') {
-      const img = n!.data as unknown as ImageNodeData;
-      if (img.dataUrl) {
-        return {
-          kind: 'image',
-          dataUrl: img.dataUrl,
-          label: img.title ?? img.filename ?? 'image source',
-        };
-      }
-    }
-  }
-  for (const sid of incoming) {
-    const n = nodeById.get(sid);
-    const k = n?.data?.kind;
-    if (k === 'video-gen') {
-      const vg = n!.data as unknown as VideoGenNodeData;
-      if (vg.outputUrl) {
-        // outputUrl is a data URL like "data:video/mp4;base64,..."
-        const m = vg.outputUrl.match(/^data:([^;]+);base64,(.+)$/);
-        if (m) {
-          return {
-            kind: 'video-gen',
-            videoBase64: m[2],
-            mimeType: m[1],
-            label: 'upstream video',
-          };
+  // Collect every reachable upstream node, grouped by category, preserving
+  // BFS order (closer first). After the walk we pick the highest-priority
+  // category that has any entry.
+  const imageGenHits: { dataUrl: string; label: string }[] = [];
+  const imageHits: { dataUrl: string; label: string }[] = [];
+  const videoGenHits: { videoBase64: string; mimeType: string; label: string }[] = [];
+
+  while (queue.length > 0) {
+    const cur = queue.shift()!;
+    for (const e of edges) {
+      if (e.target !== cur || visited.has(e.source)) continue;
+      visited.add(e.source);
+      queue.push(e.source);
+      const node = nodeById.get(e.source);
+      if (!node) continue;
+      const k = node.data?.kind;
+      if (k === 'image-gen') {
+        const ig = node.data as unknown as ImageGenNodeData;
+        if (ig.outputDataUrl) {
+          imageGenHits.push({ dataUrl: ig.outputDataUrl, label: 'generated image' });
+        }
+      } else if (k === 'image') {
+        const im = node.data as unknown as ImageNodeData;
+        if (im.dataUrl) {
+          imageHits.push({
+            dataUrl: im.dataUrl,
+            label: im.title ?? im.filename ?? 'image source',
+          });
+        }
+      } else if (k === 'video-gen') {
+        const vg = node.data as unknown as VideoGenNodeData;
+        if (vg.outputUrl) {
+          const m = vg.outputUrl.match(/^data:([^;]+);base64,(.+)$/);
+          if (m) {
+            videoGenHits.push({
+              videoBase64: m[2],
+              mimeType: m[1],
+              label: 'upstream video',
+            });
+          }
         }
       }
     }
+  }
+
+  if (imageGenHits.length > 0) {
+    return { kind: 'image-gen', ...imageGenHits[0] };
+  }
+  if (imageHits.length > 0) {
+    return { kind: 'image', ...imageHits[0] };
+  }
+  if (videoGenHits.length > 0) {
+    return { kind: 'video-gen', ...videoGenHits[0] };
   }
   return null;
 }

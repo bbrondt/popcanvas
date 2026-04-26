@@ -30,6 +30,7 @@ export const GET: APIRoute = async ({ url }) => {
     hasYoutubeApi: Boolean(import.meta.env.YOUTUBE_API_KEY),
     hasApify: Boolean(import.meta.env.APIFY_API_TOKEN),
     hasGemini: Boolean(import.meta.env.GEMINI_API_KEY),
+    veoModel: import.meta.env.VEO_MODEL || 'veo-2.0-generate-001',
   };
 
   const result: Record<string, unknown> = { ok: true, env };
