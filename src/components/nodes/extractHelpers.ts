@@ -1,4 +1,3 @@
-import type { ReactFlowInstance } from '@xyflow/react';
 import type { CanvasNodeData, NodeKind } from '@/lib/types';
 
 interface ExtractArgs {
@@ -8,12 +7,23 @@ interface ExtractArgs {
 }
 
 /**
+ * Loose flow shape so this helper accepts ReactFlowInstance from xyflow
+ * without us having to thread the generics through every caller. At runtime
+ * the node data is always CanvasNodeData; xyflow's strict typing just
+ * doesn't know that.
+ */
+interface FlowLike {
+  updateNodeData: (id: string, data: Record<string, unknown>) => void;
+  getNode: (id: string) => { data: unknown } | undefined;
+}
+
+/**
  * Single extraction entrypoint shared by every source node.
  * Marks the node as pending, calls the API, merges the result.
  */
 export async function extractNode(
   nodeId: string,
-  flow: { updateNodeData: (id: string, data: Partial<CanvasNodeData>) => void; getNode: (id: string) => { data: CanvasNodeData } | undefined },
+  flow: FlowLike,
   args: ExtractArgs,
 ): Promise<void> {
   try {
@@ -46,7 +56,7 @@ export async function extractNode(
     }
     const result = (await res.json()) as { title: string; content: string; meta?: Record<string, unknown> };
 
-    const existing = flow.getNode(nodeId)?.data ?? ({} as CanvasNodeData);
+    const existing = (flow.getNode(nodeId)?.data ?? {}) as Partial<CanvasNodeData>;
     flow.updateNodeData(nodeId, {
       ...existing,
       status: 'ready',
@@ -56,7 +66,7 @@ export async function extractNode(
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
-    const existing = flow.getNode(nodeId)?.data ?? ({} as CanvasNodeData);
+    const existing = (flow.getNode(nodeId)?.data ?? {}) as Partial<CanvasNodeData>;
     flow.updateNodeData(nodeId, { ...existing, status: 'error', error: msg });
   }
 }

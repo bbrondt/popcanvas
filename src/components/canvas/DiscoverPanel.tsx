@@ -127,7 +127,7 @@ export function DiscoverPanel({ open, onClose }: DiscoverPanelProps) {
           title: r.title,
           thumbnail: r.thumbnail,
         } satisfies YoutubeNodeData,
-      } as Node;
+      } as unknown as CanvasNode;
     } else {
       // TikTok and Instagram pages return 451 to Jina (and most scrapers).
       // Instead of asking the URL extractor to do an impossible thing, bake
@@ -148,7 +148,7 @@ export function DiscoverPanel({ open, onClose }: DiscoverPanelProps) {
           thumbnail: r.thumbnail,
           platform: r.platform,
         } satisfies UrlNodeData,
-      } as Node;
+      } as unknown as CanvasNode;
     }
     flow.addNodes(node);
     setAddedUrls((s) => new Set(s).add(r.url));

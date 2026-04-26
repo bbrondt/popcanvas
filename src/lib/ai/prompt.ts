@@ -88,7 +88,8 @@ function formatSource(source: SourceNodeData, index: number): string {
 </source>`;
   }
   const titleAttr = source.title ? ` title="${escapeXmlAttr(source.title)}"` : '';
-  const urlAttr = 'url' in source && source.url ? ` url="${escapeXmlAttr(source.url)}"` : '';
+  const urlValue = 'url' in source && source.url ? String(source.url) : '';
+  const urlAttr = urlValue ? ` url="${escapeXmlAttr(urlValue)}"` : '';
   return `<source index="${index}" type="${source.kind}"${titleAttr}${urlAttr}>
 ${source.content.trim()}
 </source>`;
