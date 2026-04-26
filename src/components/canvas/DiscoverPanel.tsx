@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useReactFlow, type Node } from '@xyflow/react';
+import { useReactFlow } from '@xyflow/react';
 import { nanoid } from 'nanoid';
 import type {
   TrendingPlatform,

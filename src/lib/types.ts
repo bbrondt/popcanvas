@@ -136,6 +136,8 @@ export interface VideoGenNodeData extends BaseNodeData {
   prompt?: string;
   /** Final video URL or data URL after generation. */
   outputUrl?: string;
+  /** Output aspect ratio passed to Veo. */
+  aspectRatio?: '16:9' | '9:16' | '1:1';
   durationSec?: 5 | 8;
   isGenerating?: boolean;
   /** Set while polling Veo for completion. */
