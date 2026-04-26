@@ -18,12 +18,6 @@ interface VideoGenRequest {
    *  instead of starting fresh from a still frame. Mutually exclusive
    *  with startingImageDataUrl. */
   extendFromVeoRef?: { uri: string; mimeType: string };
-  /** Storage path of the upstream clip in our Supabase bucket. When
-   *  present we send the video bytes inline (encodedVideo) to Veo
-   *  instead of the URI — bypasses the Files API entirely and forces
-   *  Veo to treat the input as a true extension seed rather than
-   *  silently re-using it as a content reference. */
-  extendFromStoragePath?: string;
   aspectRatio?: '16:9' | '9:16' | '1:1';
   durationSec?: 5 | 8;
   /** Used to scope the storage path so videos can be cleaned up alongside
@@ -162,43 +156,31 @@ export const POST: APIRoute = async ({ request }) => {
 
         if (isExtension) {
           const startUrl = `https://generativelanguage.googleapis.com/v1beta/models/${veoModel}:predictLongRunning?key=${apiKey}`;
-          // Two ways to point Veo at the source video for extension:
-          //   1) video: { uri: "..." }      — Files API reference. The
-          //      docs say this works, but in practice the model often
-          //      treats it as a soft content reference and silently
-          //      generates a fresh clip from the prompt instead of
-          //      truly extending. URI worked once for us, then stopped.
-          //   2) video: { encodedVideo: "<base64>" } — inline bytes.
-          //      Forces Veo to treat the input as a real extension seed.
-          //      No URI ambiguity, no Files API TTL, no encoding-field
-          //      mismatch. Costs us a Storage download per extension.
+          // Send the bare minimum. Veo's extension endpoint inherits
+          // aspect ratio and personGeneration from the source clip,
+          // and rejects them when re-passed:
+          //   "allow_adult for personGeneration is currently not supported."
+          //   "`encoding` isn't supported by this model."
+          // The SDK's image-to-video path accepts both fields fine, so
+          // the extension endpoint surface is meaningfully narrower.
           //
-          // Prefer inline bytes when we have a storagePath. URI is the
-          // fallback for older nodes that predate storagePath tracking.
-          let videoField: { uri: string } | { encodedVideo: string };
-          if (body.extendFromStoragePath) {
-            send({ type: 'status', message: 'Loading source clip for extension…' });
-            const supabaseDl = getServiceClient();
-            const { data: blob, error: dlErr } = await supabaseDl.storage
-              .from(VIDEO_BUCKET)
-              .download(body.extendFromStoragePath);
-            if (dlErr || !blob) {
-              throw new Error(`Could not read source clip from storage: ${dlErr?.message ?? 'unknown error'}`);
-            }
-            const sourceBuf = await blob.arrayBuffer();
-            const sourceBase64 = Buffer.from(sourceBuf).toString('base64');
-            console.info('[videogen:extend] using inline bytes,', sourceBuf.byteLength, 'bytes');
-            videoField = { encodedVideo: sourceBase64 };
-          } else {
-            const sourceUri = body.extendFromVeoRef!.uri;
-            console.info('[videogen:extend] no storagePath, falling back to uri =', sourceUri);
-            videoField = { uri: sourceUri };
-          }
+          // Resolution does need to be set explicitly though — extension
+          // defaults to 720p which produces a visible quality drop
+          // against a 1080p source. 1080p is the published cap.
+          //
+          // Pass the URI exactly as Veo gave it back. An earlier
+          // attempt normalized it to `files/abc` form on the theory
+          // that extension wanted the bare resource path; that was
+          // speculation and removing it lets us go back to the form
+          // the SDK uses (full https URL) which is the only shape
+          // we have positive evidence has worked at least once.
+          const sourceUri = body.extendFromVeoRef!.uri;
+          console.info('[videogen:extend] sourceUri =', sourceUri);
           const startBody = {
             instances: [
               {
                 prompt: fullPrompt,
-                video: videoField,
+                video: { uri: sourceUri },
               },
             ],
             parameters: {
@@ -208,18 +190,7 @@ export const POST: APIRoute = async ({ request }) => {
               // path accepts but extension does not). Let Veo default.
             },
           };
-          // Log a slimmed body (don't dump tens of MB of base64).
-          const loggedBody = {
-            ...startBody,
-            instances: startBody.instances.map((inst) => ({
-              ...inst,
-              video:
-                'encodedVideo' in inst.video
-                  ? { encodedVideo: `<${inst.video.encodedVideo.length} chars base64>` }
-                  : inst.video,
-            })),
-          };
-          console.info('[videogen:extend] POST', startUrl.replace(apiKey, '***'), 'body =', JSON.stringify(loggedBody));
+          console.info('[videogen:extend] POST', startUrl.replace(apiKey, '***'), 'body =', JSON.stringify(startBody));
           const startRes = await fetch(startUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
