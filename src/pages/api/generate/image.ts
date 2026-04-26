@@ -9,6 +9,10 @@ interface ImageGenRequest {
   imageGenNodeId: string;
   prompt: string;
   aspectRatio?: '1:1' | '16:9' | '9:16' | '4:3' | '3:4';
+  /** Reference images shipped explicitly so the bytes don't have to ride
+   *  along inside `nodes` (which would blow past Vercel's body limit when
+   *  there are several base64 images on the canvas). */
+  references?: { dataUrl: string; label?: string }[];
   nodes: CanvasNode[];
   edges: CanvasEdge[];
 }
@@ -49,19 +53,27 @@ export const POST: APIRoute = async ({ request }) => {
     );
   }
 
-  // Walk upstream for context. Reference images come from connected Image
-  // source nodes that have a persisted dataUrl. Text-style context (sources,
-  // chats, artifacts) gets summarized into the prompt as guidance — image
-  // models don't take XML system prompts, so we inline it.
+  // Walk upstream for TEXT-shaped context (sources, chats, artifacts).
+  // Image bytes come from body.references (preferred) — clients ship the
+  // image dataUrls in their own field so the server doesn't have to dig
+  // them out of `nodes`, which keeps the request body slim. Falling back
+  // to ctx.sources for image dataUrls covers older clients.
   const ctx = walkContext(body.imageGenNodeId, body.nodes, body.edges);
 
   const referenceImages: { mimeType: string; data: string }[] = [];
-  for (const src of ctx.sources) {
-    if (src.kind === 'image') {
-      const img = src as ImageNodeData;
-      if (img.dataUrl) {
-        const parsed = parseDataUrl(img.dataUrl);
-        if (parsed) referenceImages.push(parsed);
+  if (Array.isArray(body.references) && body.references.length > 0) {
+    for (const r of body.references) {
+      const parsed = parseDataUrl(r.dataUrl);
+      if (parsed) referenceImages.push(parsed);
+    }
+  } else {
+    for (const src of ctx.sources) {
+      if (src.kind === 'image') {
+        const img = src as ImageNodeData;
+        if (img.dataUrl) {
+          const parsed = parseDataUrl(img.dataUrl);
+          if (parsed) referenceImages.push(parsed);
+        }
       }
     }
   }
