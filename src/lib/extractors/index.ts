@@ -34,6 +34,8 @@ export async function extract(input: ExtractionInput): Promise<ExtractionResult>
       };
     case 'chat':
       throw new Error('Chat nodes are not extractable sources.');
+    case 'artifact':
+      throw new Error('Artifact nodes are not extractable sources — they consume sources.');
     default: {
       const _exhaustive: never = input.kind;
       throw new Error(`Unknown node kind: ${_exhaustive as string}`);

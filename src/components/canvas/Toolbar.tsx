@@ -2,13 +2,17 @@ import { useReactFlow } from '@xyflow/react';
 import { nanoid } from 'nanoid';
 import type { CanvasNode, NodeKind } from '@/lib/types';
 
-const KINDS: { kind: NodeKind; label: string; symbol: string }[] = [
+const SOURCE_KINDS: { kind: NodeKind; label: string; symbol: string }[] = [
   { kind: 'youtube', label: 'YouTube', symbol: '▶' },
   { kind: 'pdf', label: 'PDF', symbol: '⌹' },
   { kind: 'url', label: 'URL', symbol: '↗' },
   { kind: 'image', label: 'Image', symbol: '▢' },
   { kind: 'text', label: 'Text', symbol: '¶' },
+];
+
+const CONSUMER_KINDS: { kind: NodeKind; label: string; symbol: string }[] = [
   { kind: 'chat', label: 'Chat', symbol: '⌘' },
+  { kind: 'artifact', label: 'Artifact', symbol: '✦' },
 ];
 
 export function Toolbar() {
@@ -37,8 +41,21 @@ export function Toolbar() {
   return (
     <div className="fixed left-4 top-1/2 -translate-y-1/2 z-50">
       <div className="node-frame p-2 flex flex-col gap-1.5">
-        <div className="node-label px-1 pb-1 border-b border-ink-600 mb-1">add node</div>
-        {KINDS.map((k) => (
+        <div className="node-label px-1 pb-1 border-b border-ink-600 mb-1">sources</div>
+        {SOURCE_KINDS.map((k) => (
+          <button
+            key={k.kind}
+            onClick={() => handleAdd(k.kind)}
+            className="pill-btn flex items-center gap-2 justify-start min-w-[120px]"
+            title={`Add ${k.label} node`}
+          >
+            <span className="text-ember w-4 text-center">{k.symbol}</span>
+            <span>{k.label}</span>
+          </button>
+        ))}
+
+        <div className="node-label px-1 pt-2 pb-1 border-t border-ink-600 mt-1 mb-1">output</div>
+        {CONSUMER_KINDS.map((k) => (
           <button
             key={k.kind}
             onClick={() => handleAdd(k.kind)}
@@ -68,5 +85,7 @@ function defaultData(kind: NodeKind) {
       return { kind, status: 'idle' as const, content: '', title: 'Pasted text' };
     case 'chat':
       return { kind, status: 'idle' as const, messages: [] };
+    case 'artifact':
+      return { kind, status: 'idle' as const, template: 'youtube-script' as const };
   }
 }

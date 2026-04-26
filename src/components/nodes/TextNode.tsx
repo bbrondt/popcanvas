@@ -30,7 +30,7 @@ export function TextNode({ id, data, selected }: NodeProps) {
         onChange={(e) => setDraftTitle(e.target.value)}
         onBlur={handleBlur}
         placeholder="Title"
-        className="w-full bg-transparent border-b border-ink-600 pb-1 mb-2 font-display text-[15px] text-bone-50 focus:border-ember outline-none"
+        className="nodrag w-full bg-transparent border-b border-ink-600 pb-1 mb-2 font-display text-[15px] text-bone-50 focus:border-ember outline-none"
       />
       <textarea
         value={draft}
@@ -38,7 +38,7 @@ export function TextNode({ id, data, selected }: NodeProps) {
         onBlur={handleBlur}
         placeholder="Paste text, notes, or anything you want as context…"
         rows={5}
-        className="w-full bg-ink-900 border border-ink-600 px-2 py-1.5 text-xs font-mono text-bone-100 focus:border-ember outline-none rounded-sm resize-y"
+        className="nodrag w-full bg-ink-900 border border-ink-600 px-2 py-1.5 text-xs font-mono text-bone-100 focus:border-ember outline-none rounded-sm resize-y"
       />
     </NodeShell>
   );

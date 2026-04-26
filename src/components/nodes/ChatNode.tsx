@@ -1,8 +1,15 @@
 import { useState, useRef, useEffect } from 'react';
-import { useReactFlow, useStore, type NodeProps } from '@xyflow/react';
+import { useReactFlow, useStore, type Node, type Edge, type NodeProps } from '@xyflow/react';
 import { NodeShell } from './NodeShell';
 import { nanoid } from 'nanoid';
-import { NODE_WIDTH, type ChatNodeData, type ChatMessage, type SourceNodeData } from '@/lib/types';
+import {
+  NODE_WIDTH,
+  type ArtifactNodeData,
+  type ArtifactTemplateId,
+  type ChatNodeData,
+  type ChatMessage,
+  type SourceNodeData,
+} from '@/lib/types';
 
 export function ChatNode({ id, data, selected }: NodeProps) {
   const d = data as ChatNodeData;
@@ -112,6 +119,11 @@ export function ChatNode({ id, data, selected }: NodeProps) {
           if (event.type === 'text' && event.text) {
             assembled += event.text;
             setStreamingText(assembled);
+          } else if (event.type === 'tool_use') {
+            // Claude wants to spawn an asset. Create the artifact node now
+            // and connect it to this chat (and to the same sources). It
+            // auto-generates as soon as it mounts.
+            handleToolUse(event as { name: string; input: unknown });
           } else if (event.type === 'error') {
             // Server-side stream error. Stop reading and bubble up to the
             // outer catch with the actual message instead of swallowing it.
@@ -182,6 +194,64 @@ export function ChatNode({ id, data, selected }: NodeProps) {
     }
   };
 
+  /**
+   * Spawn a new ArtifactNode in response to Claude's create_artifact tool
+   * call. Wire it to this chat AND to the same sources (so it inherits
+   * the chat's context). Position to the right of this node, stacking
+   * downward if there are already artifacts in that column.
+   */
+  const handleToolUse = (event: { name: string; input: unknown }) => {
+    if (event.name !== 'create_artifact') return;
+    const input = (event.input ?? {}) as { template?: string; instructions?: string };
+    const tplId = isValidTemplate(input.template) ? input.template : 'custom';
+    const customInstructions = input.instructions?.trim() || '';
+
+    const allNodes = flow.getNodes();
+    const allEdges = flow.getEdges();
+    const me = allNodes.find((n) => n.id === id);
+    if (!me) return;
+
+    const artifactId = `artifact-${nanoid(6)}`;
+
+    // Stack vertically if other artifacts already sit to my right.
+    const myRight = me.position.x + (me.width ?? NODE_WIDTH.chat);
+    const stackedY = allNodes
+      .filter((n) => (n.data as { kind?: string })?.kind === 'artifact' && n.position.x > myRight - 40)
+      .reduce((max, n) => Math.max(max, n.position.y + (n.height ?? 400) + 24), me.position.y);
+
+    const artifactNode: Node = {
+      id: artifactId,
+      type: 'artifact',
+      position: { x: myRight + 80, y: stackedY === me.position.y ? me.position.y : stackedY },
+      data: {
+        kind: 'artifact',
+        status: 'pending',
+        template: tplId,
+        customInstructions,
+        autoGenerate: true,
+      } satisfies ArtifactNodeData,
+    };
+
+    // Wire chat -> artifact, plus every source -> artifact so the new node
+    // has the same context as this chat.
+    const newEdges: Edge[] = [
+      { id: `e-${id}-${artifactId}`, source: id, target: artifactId, animated: true },
+    ];
+    for (const e of allEdges) {
+      if (e.target === id) {
+        newEdges.push({
+          id: `e-${e.source}-${artifactId}`,
+          source: e.source,
+          target: artifactId,
+          animated: true,
+        });
+      }
+    }
+
+    flow.addNodes(artifactNode);
+    flow.addEdges(newEdges);
+  };
+
   return (
     <NodeShell
       id={id}
@@ -211,6 +281,9 @@ export function ChatNode({ id, data, selected }: NodeProps) {
       />
 
       <div className="border-t border-ink-600 pt-2">
+        {connectedSources.length > 0 && !isStreaming && (
+          <QuickActions onPick={(prompt) => setDraft(prompt)} disabled={isStreaming} />
+        )}
         <textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
@@ -218,7 +291,7 @@ export function ChatNode({ id, data, selected }: NodeProps) {
           placeholder="Ask something about your sources…"
           rows={2}
           disabled={isStreaming}
-          className="w-full bg-ink-900 border border-ink-600 px-2 py-1.5 text-xs font-mono text-bone-100 focus:border-ember outline-none rounded-sm resize-none"
+          className="nodrag w-full bg-ink-900 border border-ink-600 px-2 py-1.5 text-xs font-mono text-bone-100 focus:border-ember outline-none rounded-sm resize-none"
         />
         <div className="flex items-center justify-between mt-2">
           <span className="node-label opacity-60">⌘↵ to send</span>
@@ -294,6 +367,48 @@ function Message({ message }: { message: ChatMessage }) {
     <div className={`text-[12px] ${isUser ? 'text-bone-200' : 'text-bone-50'}`}>
       <div className="node-label mb-1">{isUser ? '› you' : '⌘ claude'}</div>
       <div className="font-sans leading-relaxed whitespace-pre-wrap">{message.content}</div>
+    </div>
+  );
+}
+
+const VALID_TEMPLATES: ArtifactTemplateId[] = [
+  'youtube-script',
+  'video-script',
+  'lead-magnet',
+  'ad-copy',
+  'tweet-thread',
+  'blog-post',
+  'email-sequence',
+  'linkedin-post',
+  'custom',
+];
+
+function isValidTemplate(t: string | undefined): t is ArtifactTemplateId {
+  return !!t && (VALID_TEMPLATES as string[]).includes(t);
+}
+
+const QUICK_PROMPTS: { label: string; prompt: string }[] = [
+  { label: 'summarize', prompt: 'Give me a concise summary of the connected sources, highlighting the most important points.' },
+  { label: 'takeaways', prompt: 'List the 5 most important takeaways from the connected sources, each as a single clear sentence.' },
+  { label: 'angles', prompt: 'Brainstorm 10 distinct content angles I could use for marketing material based on the connected sources. For each, give a one-line description and the audience it would best serve.' },
+  { label: 'questions', prompt: "What follow-up questions should I be asking based on these sources? List 5–10 questions that would deepen my understanding or surface what's missing." },
+  { label: 'quotes', prompt: 'Pull the 5 most quotable lines or statistics from the connected sources. For each, include the source it came from.' },
+];
+
+function QuickActions({ onPick, disabled }: { onPick: (p: string) => void; disabled: boolean }) {
+  return (
+    <div className="flex flex-wrap gap-1 mb-2">
+      {QUICK_PROMPTS.map((q) => (
+        <button
+          key={q.label}
+          onClick={() => onPick(q.prompt)}
+          disabled={disabled}
+          className="pill-btn text-[10px] py-1 px-2"
+          title={q.prompt}
+        >
+          {q.label}
+        </button>
+      ))}
     </div>
   );
 }
