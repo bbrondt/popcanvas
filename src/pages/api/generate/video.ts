@@ -168,17 +168,14 @@ export const POST: APIRoute = async ({ request }) => {
           // defaults to 720p which produces a visible quality drop
           // against a 1080p source. 1080p is the published cap.
           //
-          // URI normalization: Veo's response gives us a download URL
-          // like `https://generativelanguage.googleapis.com/v1beta/files/abc:download?alt=media`.
-          // For extension input, several reports suggest the API wants
-          // the bare resource path (`files/abc`) — passing the download
-          // URL is accepted (the call returns 200 and Veo even runs
-          // safety checks against the source) but the model may quietly
-          // ignore it as an extension seed and just generate from
-          // prompt, producing a "fresh-feeling" clip. Strip to the
-          // resource path so Veo treats it as a true extension source.
-          const sourceUri = normalizeVeoFileUri(body.extendFromVeoRef!.uri);
-          console.info('[videogen:extend] sourceUri (normalized) =', sourceUri, 'original =', body.extendFromVeoRef!.uri);
+          // Pass the URI exactly as Veo gave it back. An earlier
+          // attempt normalized it to `files/abc` form on the theory
+          // that extension wanted the bare resource path; that was
+          // speculation and removing it lets us go back to the form
+          // the SDK uses (full https URL) which is the only shape
+          // we have positive evidence has worked at least once.
+          const sourceUri = body.extendFromVeoRef!.uri;
+          console.info('[videogen:extend] sourceUri =', sourceUri);
           const startBody = {
             instances: [
               {
