@@ -96,7 +96,10 @@ export const POST: APIRoute = async ({ request }) => {
             numberOfVideos: 1,
             aspectRatio,
             durationSeconds: durationSec,
-            personGeneration: 'allow_all',
+            // 'allow_all' is region/account-restricted and returns a 400 in
+            // most setups; 'allow_adult' is the broadly-supported value that
+            // still permits people in frame.
+            personGeneration: 'allow_adult',
           },
         });
 
