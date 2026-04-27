@@ -224,7 +224,7 @@ export function ArtifactNode({ id, data, selected }: NodeProps) {
                 : 'Layer on top of the template. e.g. "first-time homebuyers, more aggressive tone, lead with the loan size".'
             }
             rows={template === 'custom' ? 4 : 3}
-            className="nodrag w-full bg-ink-900 border border-ink-600 px-2 py-1.5 text-xs font-mono text-bone-100 focus:border-ember outline-none rounded-sm resize-y"
+            className="nodrag nowheel w-full bg-ink-900 border border-ink-600 px-2 py-1.5 text-xs font-mono text-bone-100 focus:border-ember outline-none rounded-sm resize-y"
           />
         </label>
       </div>
@@ -447,7 +447,7 @@ function OutputPanel({
         readOnly={!editable}
         onChange={(e) => onChange(e.target.value)}
         rows={14}
-        className="nodrag w-full bg-ink-900 border border-ink-600 px-2 py-2 text-[12px] font-sans text-bone-50 focus:border-ember outline-none rounded-sm resize-y leading-relaxed"
+        className="nodrag nowheel w-full bg-ink-900 border border-ink-600 px-2 py-2 text-[12px] font-sans text-bone-50 focus:border-ember outline-none rounded-sm resize-y leading-relaxed"
       />
       {editable && (
         <p className="mt-1 text-[10px] font-mono text-bone-400">

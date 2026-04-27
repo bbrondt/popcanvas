@@ -276,7 +276,7 @@ export function ChatNode({ id, data, selected }: NodeProps) {
           placeholder="Ask something about your sources…"
           rows={2}
           disabled={isStreaming}
-          className="nodrag w-full bg-ink-900 border border-ink-600 px-2 py-1.5 text-xs font-mono text-bone-100 focus:border-ember outline-none rounded-sm resize-none"
+          className="nodrag nowheel w-full bg-ink-900 border border-ink-600 px-2 py-1.5 text-xs font-mono text-bone-100 focus:border-ember outline-none rounded-sm resize-none"
         />
         <div className="flex items-center justify-between mt-2">
           <span className="node-label opacity-60">⌘↵ to send</span>
@@ -319,7 +319,7 @@ function MessagesScroller({
   return (
     <div
       ref={ref}
-      className="max-h-80 overflow-y-auto space-y-3 mb-3 pr-1 scroll-smooth"
+      className="nowheel max-h-80 overflow-y-auto space-y-3 mb-3 pr-1 scroll-smooth"
     >
       {messages.length === 0 && !streamingText && (
         <div className="text-bone-400 font-mono text-[11px] py-4 text-center">

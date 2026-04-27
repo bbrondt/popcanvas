@@ -388,7 +388,7 @@ export function VideoGenNode({ id, data, selected }: NodeProps) {
         disabled={isGenerating}
         placeholder="Describe the motion (e.g. slow dolly-in, camera pans left, subject turns toward camera)…"
         rows={3}
-        className="nodrag w-full bg-ink-900 border border-ink-600 px-2 py-1.5 text-xs font-mono text-bone-100 focus:border-ember outline-none rounded-md resize-y mb-2"
+        className="nodrag nowheel w-full bg-ink-900 border border-ink-600 px-2 py-1.5 text-xs font-mono text-bone-100 focus:border-ember outline-none rounded-md resize-y mb-2"
       />
 
       <div className="flex items-center gap-1.5 mb-2 flex-wrap">
