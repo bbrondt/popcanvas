@@ -2,6 +2,7 @@ import type { APIRoute } from 'astro';
 import { GoogleGenAI } from '@google/genai';
 import { walkContext } from '@/lib/ai/prompt';
 import { generateWithOpenAi } from '@/lib/ai/openaiImage';
+import { generateWithFlux } from '@/lib/ai/fluxImage';
 import type {
   CanvasNode,
   CanvasEdge,
@@ -110,6 +111,33 @@ export const POST: APIRoute = async ({ request }) => {
       });
     } catch (err) {
       return logAndFail('imagegen:openai', err);
+    }
+  }
+
+  if (model === 'flux-pro') {
+    const falKey = import.meta.env.FAL_API_KEY;
+    if (!falKey) {
+      return Response.json(
+        { error: 'FAL_API_KEY not set in env. Required for flux-pro. Get one from fal.ai/dashboard/keys.' },
+        { status: 500 },
+      );
+    }
+    try {
+      const result = await generateWithFlux({
+        apiKey: falKey,
+        prompt: contextSummary,
+        aspectRatio: body.aspectRatio,
+        references: referenceImages,
+      });
+      return Response.json({
+        dataUrl: result.dataUrl,
+        mimeType: result.mimeType,
+        referenceCount: referenceImages.length,
+        modelNote: null,
+        model,
+      });
+    } catch (err) {
+      return logAndFail('imagegen:flux', err);
     }
   }
 
