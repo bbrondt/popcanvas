@@ -24,6 +24,7 @@ import { DiscoverPanel } from './DiscoverPanel';
 import { CanvasIdContext } from './canvasIdContext';
 import { YoutubeNode } from '../nodes/YoutubeNode';
 import { PdfNode } from '../nodes/PdfNode';
+import { FileNode } from '../nodes/FileNode';
 import { UrlNode } from '../nodes/UrlNode';
 import { ImageNode } from '../nodes/ImageNode';
 import { TextNode } from '../nodes/TextNode';
@@ -35,6 +36,7 @@ import { VideoGenNode } from '../nodes/VideoGenNode';
 const nodeTypes = {
   youtube: YoutubeNode,
   pdf: PdfNode,
+  file: FileNode,
   url: UrlNode,
   image: ImageNode,
   text: TextNode,

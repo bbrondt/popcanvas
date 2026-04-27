@@ -2,7 +2,11 @@ import type { NodeKind, CanvasNodeData } from './types';
 
 export const SOURCE_KINDS: { kind: NodeKind; label: string; symbol: string }[] = [
   { kind: 'youtube', label: 'YouTube', symbol: '▶' },
-  { kind: 'pdf', label: 'PDF', symbol: '⌹' },
+  // 'file' supersedes 'pdf' — handles PDF, DOCX, MD, TXT, CSV in one
+  // uploader. The 'pdf' kind is kept as a NodeKind/component for
+  // backward compat with existing canvases but no longer surfaced in
+  // the toolbar.
+  { kind: 'file', label: 'File', symbol: '⌹' },
   { kind: 'url', label: 'URL', symbol: '↗' },
   { kind: 'image', label: 'Image', symbol: '▢' },
   { kind: 'text', label: 'Text', symbol: '¶' },
@@ -26,6 +30,8 @@ export function defaultData(kind: NodeKind): CanvasNodeData {
     case 'youtube':
       return { kind, status: 'idle', url: '' };
     case 'pdf':
+      return { kind, status: 'idle' };
+    case 'file':
       return { kind, status: 'idle' };
     case 'url':
       return { kind, status: 'idle', url: '' };

@@ -1,5 +1,6 @@
 import { extractYoutube } from './youtube';
 import { extractPdf } from './pdf';
+import { extractFile } from './file';
 import { extractUrl } from './url';
 import { extractImage } from './image';
 import type { NodeKind } from '../types';
@@ -22,6 +23,10 @@ export async function extract(input: ExtractionInput): Promise<ExtractionResult>
       return extractYoutube(input.payload as { url: string });
     case 'pdf':
       return extractPdf(input.payload as { buffer: Buffer; filename: string });
+    case 'file':
+      return extractFile(
+        input.payload as { buffer: Buffer; filename: string; mimeType?: string },
+      );
     case 'url':
       return extractUrl(input.payload as { url: string });
     case 'image':

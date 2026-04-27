@@ -55,7 +55,7 @@ async function handleFileUpload(request: Request): Promise<Response> {
 
   const result = await extract({
     kind,
-    payload: { buffer, filename: file.name },
+    payload: { buffer, filename: file.name, mimeType: file.type || undefined },
   });
   await writeCache(cacheKey, kind, result);
   return Response.json(result);
