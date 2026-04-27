@@ -28,18 +28,41 @@ export function ChatNode({ id, data, selected }: NodeProps) {
 
   const messages = d.messages ?? [];
 
-  const handleSend = async () => {
-    if (!draft.trim() || isStreaming) return;
+  // When this chat was spawned as a branch (via spawn_branches), the
+  // parent passes a starter message via pendingMessage. Auto-fire it
+  // exactly once on mount so each branch arrives with an answer ready
+  // — that's the whole point of parallel branches. The flag is then
+  // cleared on the node so a refresh / canvas reload doesn't re-fire.
+  // Guard with a ref to prevent double-fire under React StrictMode.
+  const autoFiredRef = useRef(false);
+  useEffect(() => {
+    if (autoFiredRef.current) return;
+    if (!d.pendingMessage || isStreaming || messages.length > 0) return;
+    autoFiredRef.current = true;
+    const msg = d.pendingMessage;
+    // Clear the flag from the node BEFORE sending so a re-render
+    // mid-stream can't double-fire it.
+    flow.updateNodeData(id, { ...d, pendingMessage: undefined });
+    void handleSend(msg);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [d.pendingMessage]);
+
+  const handleSend = async (override?: string) => {
+    // `override` lets the auto-fire path (pendingMessage from a spawned
+    // branch) send a message without that text being in the draft input.
+    // Manual sends pass nothing and use the draft state as before.
+    const text = (override ?? draft).trim();
+    if (!text || isStreaming) return;
 
     const userMsg: ChatMessage = {
       id: nanoid(),
       role: 'user',
-      content: draft.trim(),
+      content: text,
       createdAt: new Date().toISOString(),
     };
 
-    const userMessageText = draft.trim();
-    setDraft('');
+    const userMessageText = text;
+    if (!override) setDraft('');
     setStreamingText('');
     setIsStreaming(true);
 
@@ -188,14 +211,24 @@ export function ChatNode({ id, data, selected }: NodeProps) {
   };
 
   /**
-   * Spawn a new ArtifactNode in response to Claude's create_artifact tool
-   * call. Wire it to this chat AND to the same sources (so it inherits
-   * the chat's context). Position to the right of this node, stacking
-   * downward if there are already artifacts in that column.
+   * Dispatch tool_use events from Claude. Two flavors:
+   *   - create_artifact   → one artifact node
+   *   - spawn_branches    → N nodes (chat or artifact) fanned below this
+   *                          chat, each carrying its own topic / message.
+   *                          Used when the user asks for parallel work
+   *                          ("a branch for each archetype") so we don't
+   *                          stuff everything into a single chat reply.
    */
   const handleToolUse = (event: { name: string; input: unknown }) => {
-    if (event.name !== 'create_artifact') return;
-    const input = (event.input ?? {}) as { template?: string; instructions?: string };
+    if (event.name === 'create_artifact') {
+      handleCreateArtifact(event.input);
+    } else if (event.name === 'spawn_branches') {
+      handleSpawnBranches(event.input);
+    }
+  };
+
+  const handleCreateArtifact = (rawInput: unknown) => {
+    const input = (rawInput ?? {}) as { template?: string; instructions?: string };
     const tplId = isValidTemplate(input.template) ? input.template : 'custom';
     const customInstructions = input.instructions?.trim() || '';
 
@@ -237,6 +270,110 @@ export function ChatNode({ id, data, selected }: NodeProps) {
     flow.addEdges(newEdges);
   };
 
+  /**
+   * Fan an array of new nodes out below this chat. Each branch is either
+   * a chat (with an auto-firing starterMessage) or an artifact (with a
+   * template + instructions). All connect upward to this chat, so they
+   * inherit its source context via walkContext's transitive walk.
+   *
+   * Layout: horizontal row of equal-spaced nodes, centered under this
+   * chat, with a fixed vertical gap. If the row gets too wide it'll
+   * spill past viewport edges — fit-view (Cmd+0) reframes everything.
+   */
+  const handleSpawnBranches = (rawInput: unknown) => {
+    const input = (rawInput ?? {}) as {
+      branches?: {
+        kind?: 'chat' | 'artifact';
+        title?: string;
+        starterMessage?: string;
+        template?: string;
+        instructions?: string;
+      }[];
+    };
+    const branches = Array.isArray(input.branches) ? input.branches : [];
+    if (branches.length === 0) return;
+
+    const allNodes = flow.getNodes();
+    const me = allNodes.find((n) => n.id === id);
+    if (!me) return;
+
+    const meWidth = me.width ?? NODE_WIDTH.chat;
+    const meHeight = me.height ?? 500;
+    const colGap = 32;
+    const rowGap = 96;
+
+    // Center the row under this chat. Use the chat width per branch so
+    // the spacing matches the visible node sizes regardless of kind.
+    const itemWidth = NODE_WIDTH.chat;
+    const totalWidth = branches.length * itemWidth + (branches.length - 1) * colGap;
+    const startX = me.position.x + meWidth / 2 - totalWidth / 2;
+    const baseY = me.position.y + meHeight + rowGap;
+
+    const newNodes: Node[] = [];
+    const newEdges: Edge[] = [];
+
+    branches.forEach((branch, i) => {
+      const x = startX + i * (itemWidth + colGap);
+      const y = baseY;
+      const title = branch.title?.trim() || (branch.kind === 'chat' ? 'Branch' : 'Asset');
+
+      if (branch.kind === 'artifact') {
+        const tplId = isValidTemplate(branch.template) ? branch.template : 'custom';
+        const customInstructions = [
+          title ? `# ${title}` : '',
+          branch.instructions?.trim() ?? '',
+        ]
+          .filter(Boolean)
+          .join('\n\n');
+        const artifactId = `artifact-${nanoid(6)}`;
+        newNodes.push({
+          id: artifactId,
+          type: 'artifact',
+          position: { x, y },
+          data: {
+            kind: 'artifact',
+            status: 'pending',
+            template: tplId,
+            customInstructions,
+            autoGenerate: true,
+          } satisfies ArtifactNodeData,
+        });
+        newEdges.push({
+          id: `e-${id}-${artifactId}`,
+          source: id,
+          target: artifactId,
+          animated: true,
+        });
+      } else {
+        // Chat branch. The pendingMessage gets auto-sent on mount via
+        // an effect inside the spawned ChatNode (see useEffect below);
+        // we DON'T add it to messages here because that'd double-send.
+        const chatId = `chat-${nanoid(6)}`;
+        newNodes.push({
+          id: chatId,
+          type: 'chat',
+          position: { x, y },
+          data: {
+            kind: 'chat',
+            status: 'idle',
+            messages: [],
+            branchTitle: title,
+            pendingMessage: branch.starterMessage?.trim() || undefined,
+          } satisfies ChatNodeData,
+        });
+        newEdges.push({
+          id: `e-${id}-${chatId}`,
+          source: id,
+          target: chatId,
+          animated: true,
+        });
+      }
+    });
+
+    flow.addNodes(newNodes);
+    flow.addEdges(newEdges);
+  };
+
   return (
     <NodeShell
       id={id}
@@ -246,9 +383,17 @@ export function ChatNode({ id, data, selected }: NodeProps) {
       outputHandle
       status={isStreaming ? 'pending' : 'ready'}
     >
-      <div className="flex items-center justify-between mb-2">
-        <span className="node-label">⌘ chat</span>
-        <span className={`node-label ${isStreaming ? 'text-ember' : 'text-moss'}`}>
+      <div className="flex items-center justify-between mb-2 gap-2">
+        <span className="node-label flex-shrink-0">⌘ chat</span>
+        {d.branchTitle && (
+          <span
+            className="node-label text-ember/90 truncate flex-1 text-center"
+            title={d.branchTitle}
+          >
+            {d.branchTitle}
+          </span>
+        )}
+        <span className={`node-label flex-shrink-0 ${isStreaming ? 'text-ember' : 'text-moss'}`}>
           {isStreaming ? 'thinking…' : 'ready'}
         </span>
       </div>
@@ -281,7 +426,7 @@ export function ChatNode({ id, data, selected }: NodeProps) {
         <div className="flex items-center justify-between mt-2">
           <span className="node-label opacity-60">⌘↵ to send</span>
           <button
-            onClick={handleSend}
+            onClick={() => handleSend()}
             disabled={!draft.trim() || isStreaming}
             className="pill-btn-primary disabled:opacity-40 disabled:cursor-not-allowed"
           >

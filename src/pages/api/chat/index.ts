@@ -19,7 +19,7 @@ const CHAT_TOOLS: ToolDef[] = [
     name: 'create_artifact',
     description: `Create a new long-form deliverable on the canvas (script, lead magnet, ad copy, blog post, email sequence, tweet thread, LinkedIn post, etc).
 
-Call this when the user asks for an ASSET to be produced — anything they would copy, edit, download, or ship. Do NOT call this for short answers, summaries, or back-and-forth discussion; just reply with text for those.
+Call this when the user asks for a SINGLE asset to be produced — anything they would copy, edit, download, or ship. Do NOT call this for short answers, summaries, or back-and-forth discussion; just reply with text for those. For MULTIPLE parallel deliverables (one per archetype, one per angle, etc.), use spawn_branches instead — it lets you create them all in one tool call.
 
 After calling this tool, briefly tell the user (in 1-2 sentences) what asset you started and any creative direction you're taking. Don't paste the artifact into chat — it lives in its own panel.
 
@@ -38,6 +38,56 @@ Pick the template that best fits the user's request. Use 'custom' only when none
         },
       },
       required: ['template'],
+    },
+  },
+  {
+    name: 'spawn_branches',
+    description: `Spawn MULTIPLE connected nodes on the canvas in a single call — one per branch. This is how the user composes parallel work: "give me a branch for each archetype", "create an angle node for each of these three angles", "set up a chat for each segment so I can dive deep on them separately".
+
+Each branch is either a chat node (for further conversation / exploration the user will steer) or an artifact node (for a single deliverable). Mix and match freely.
+
+Call this INSTEAD of calling create_artifact several times in a row. Limit: 12 branches max per call so the canvas doesn't get overwhelmed; if the user asks for more, ask them to narrow down or call spawn_branches again later for the rest.
+
+After spawning, briefly tell the user what you laid out (1-2 sentences). Don't paste the per-branch content into chat — each node lives in its own panel.`,
+    input_schema: {
+      type: 'object',
+      properties: {
+        branches: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 12,
+          description: 'Array of nodes to spawn. Each becomes its own panel on the canvas, connected to this chat.',
+          items: {
+            type: 'object',
+            properties: {
+              kind: {
+                type: 'string',
+                enum: ['chat', 'artifact'],
+                description: 'chat: a new conversation the user will steer (use when each branch needs back-and-forth). artifact: a single produced deliverable (use when each branch is a self-contained asset like a script or ad copy).',
+              },
+              title: {
+                type: 'string',
+                description: 'Short label (3-6 words) shown on the spawned node so the user can tell branches apart at a glance.',
+              },
+              starterMessage: {
+                type: 'string',
+                description: '(chat branches) The first user message to seed the conversation with — auto-fires when the chat opens, so each branch arrives with an answer ready. Should be specific enough that the response is immediately useful.',
+              },
+              template: {
+                type: 'string',
+                enum: TEMPLATE_IDS,
+                description: '(artifact branches) Template id. Pick the closest fit per branch.',
+              },
+              instructions: {
+                type: 'string',
+                description: '(artifact branches) Specific direction for this branch (audience, angle, length, etc.).',
+              },
+            },
+            required: ['kind', 'title'],
+          },
+        },
+      },
+      required: ['branches'],
     },
   },
 ];
@@ -139,9 +189,17 @@ export const POST: APIRoute = async ({ request }) => {
   });
 };
 
-const TOOL_USE_HINT = `When the user asks you to produce a deliverable (script, lead magnet, ad copy, blog post, email sequence, tweet thread, LinkedIn post, etc.), call the create_artifact tool. The artifact is shown to the user in its own panel on the canvas — you don't need to paste it into chat. After invoking the tool, briefly describe the asset you started.
+const TOOL_USE_HINT = `When the user asks you to produce a SINGLE deliverable (script, lead magnet, ad copy, blog post, email sequence, tweet thread, LinkedIn post, etc.), call create_artifact. The artifact is shown in its own panel — don't paste it into chat.
 
-For questions, summaries, brainstorming, or back-and-forth discussion: just answer in chat. Don't create artifacts for those.`;
+When the user asks for MULTIPLE PARALLEL things ("a branch for each archetype", "one node per angle", "set up a chat for each segment", "build it out separately for X, Y, Z"), call spawn_branches ONCE with all of them in the array. NEVER call create_artifact repeatedly to fake parallelism — the canvas tool handles it natively.
+
+Choose between chat-branches and artifact-branches per item:
+  - kind: 'chat'     — when the user will keep iterating on this thread (exploring an archetype, drilling into an angle).
+  - kind: 'artifact' — when each branch is a finished deliverable (one ad per format, one email per audience).
+
+For chat branches, write a starterMessage that's specific enough to produce a useful first response — the user wanted parallelism precisely so they can scan many threads quickly, so each thread should arrive populated, not empty.
+
+For questions, summaries, brainstorming, or back-and-forth: just answer in chat.`;
 
 function logAndFail(scope: string, err: unknown): Response {
   const e = err instanceof Error ? err : new Error(String(err));

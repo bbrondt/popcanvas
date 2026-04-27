@@ -111,6 +111,15 @@ export interface ChatNodeData extends BaseNodeData {
   kind: 'chat';
   messages: ChatMessage[];
   isStreaming?: boolean;
+  /** Optional starter message a parent chat seeded onto this branch
+   *  via the spawn_branches tool. The chat auto-sends this on mount
+   *  exactly once, then clears the field, so each spawned branch
+   *  arrives with an answer ready instead of an empty input box. */
+  pendingMessage?: string;
+  /** Optional title shown on the chat header — set when this chat was
+   *  spawned as a branch so the user can tell branches apart at a
+   *  glance without opening each one. */
+  branchTitle?: string;
 }
 
 export type ArtifactTemplateId =
