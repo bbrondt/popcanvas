@@ -38,7 +38,7 @@ export function TextNode({ id, data, selected }: NodeProps) {
         onBlur={handleBlur}
         placeholder="Paste text, notes, or anything you want as context…"
         rows={5}
-        className="nodrag w-full bg-ink-900 border border-ink-600 px-2 py-1.5 text-xs font-mono text-bone-100 focus:border-ember outline-none rounded-sm resize-y"
+        className="nodrag nowheel w-full bg-ink-900 border border-ink-600 px-2 py-1.5 text-xs font-mono text-bone-100 focus:border-ember outline-none rounded-sm resize-y"
       />
     </NodeShell>
   );
