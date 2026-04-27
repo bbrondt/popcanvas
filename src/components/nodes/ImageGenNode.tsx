@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useReactFlow, useStore, type NodeProps } from '@xyflow/react';
 import { NodeShell } from './NodeShell';
 import { slimNodesForApi } from '@/lib/slimPayload';
+import { compressImageDataUrl } from '@/lib/imageCompress';
 import {
   NODE_WIDTH,
   type ImageGenModel,
@@ -110,9 +111,21 @@ export function ImageGenNode({ id, data, selected }: NodeProps) {
         throw new Error(msg || `image-gen failed (${res.status})`);
       }
       const data = (await res.json()) as { dataUrl: string };
+      // Compress before persisting. Flux outputs at 2160px+ which, when
+      // saved into node data raw, blow Vercel's 4.5MB cap on canvas
+      // autosave (PUT /api/canvas/[id]) — every save fails 413 silently
+      // and the regenerated image lives only in browser memory until
+      // refresh. Compression makes the bytes fit and is a no-op on
+      // already-small outputs from nano-banana / gpt-image-2.
+      const compressedDataUrl = await compressImageDataUrl(data.dataUrl);
+      // Read the latest node data instead of using the closure-captured
+      // `d` — fixes a subtle bug where edits made during the regen
+      // (typing in the prompt, switching aspect, etc.) were getting
+      // clobbered when this final updateNodeData spread the stale d.
+      const latest = (flow.getNode(id)?.data as ImageGenNodeData | undefined) ?? d;
       flow.updateNodeData(id, {
-        ...d,
-        outputDataUrl: data.dataUrl,
+        ...latest,
+        outputDataUrl: compressedDataUrl,
         isGenerating: false,
         status: 'ready',
       });
