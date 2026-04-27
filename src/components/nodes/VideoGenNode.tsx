@@ -125,7 +125,10 @@ export function VideoGenNode({ id, data, selected }: NodeProps) {
     if (args.kind === 'extend') {
       requestBody.extendFromVeoRef = { uri: args.veoRef.uri, mimeType: args.veoRef.mimeType };
     } else if (args.startingImageDataUrl) {
-      requestBody.startingImageDataUrl = args.startingImageDataUrl;
+      // Compress before shipping. Flux outputs at 1080p+ blow Vercel's
+      // 4.5MB request body cap (FUNCTION_PAYLOAD_TOO_LARGE) when sent
+      // raw. compressStartingImage is a no-op on already-small images.
+      requestBody.startingImageDataUrl = await compressStartingImage(args.startingImageDataUrl);
     }
 
     const res = await fetch('/api/generate/video', {
@@ -610,4 +613,40 @@ async function extractLastFrame(videoSrc: string): Promise<string> {
   if (!ctx) throw new Error('Canvas 2D context unavailable.');
   ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
   return canvas.toDataURL('image/png');
+}
+
+/**
+ * Resize a base64 starting image to a max edge of 1280px and re-encode
+ * as JPEG before shipping to /api/generate/video. Without this the
+ * higher-resolution images Flux produces (often 1080p+) blow past
+ * Vercel's 4.5MB request body cap with FUNCTION_PAYLOAD_TOO_LARGE.
+ *
+ * Veo internally downsamples whatever starting frame it gets, so 1280px
+ * @ JPEG 85% is plenty of fidelity. Skip the work entirely if the
+ * source is already small.
+ */
+async function compressStartingImage(dataUrl: string): Promise<string> {
+  const VERCEL_PAYLOAD_THRESHOLD = 3_000_000; // 3MB → comfortable margin under 4.5MB
+  if (dataUrl.length < VERCEL_PAYLOAD_THRESHOLD) return dataUrl;
+
+  const img = new Image();
+  img.src = dataUrl;
+  await new Promise<void>((resolve, reject) => {
+    img.onload = () => resolve();
+    img.onerror = () => reject(new Error('Could not load starting image for resize.'));
+  });
+
+  const MAX_EDGE = 1280;
+  const longEdge = Math.max(img.width, img.height);
+  const scale = longEdge > MAX_EDGE ? MAX_EDGE / longEdge : 1;
+  const w = Math.round(img.width * scale);
+  const h = Math.round(img.height * scale);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Canvas 2D context unavailable for image resize.');
+  ctx.drawImage(img, 0, 0, w, h);
+  return canvas.toDataURL('image/jpeg', 0.85);
 }
