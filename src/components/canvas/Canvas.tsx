@@ -9,6 +9,7 @@ import {
   addEdge,
   applyNodeChanges,
   applyEdgeChanges,
+  useReactFlow,
   type Connection,
   type NodeChange,
   type EdgeChange,
@@ -86,6 +87,31 @@ function CanvasInner({ canvasId }: CanvasProps) {
   const [loaded, setLoaded] = useState(false);
   const [discoverOpen, setDiscoverOpen] = useState(false);
   const saveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reactFlow = useReactFlow();
+
+  // "Fit everything in view" — frames every node on the canvas with a
+  // little padding. Triggered by the title-bar button and Cmd/Ctrl+0.
+  // Padding is set higher than React Flow's default so node borders
+  // don't kiss the viewport edges, and there's a smooth animation so
+  // the user can track which direction they were before.
+  const fitAllNodes = useCallback(() => {
+    reactFlow.fitView({ padding: 0.25, duration: 400, maxZoom: 1.2, minZoom: 0.1 });
+  }, [reactFlow]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      // Cmd+0 / Ctrl+0 — same shortcut browsers use for "actual size",
+      // repurposed here for "fit everything." Active anywhere on the
+      // canvas; we don't bail out for input focus because this is more
+      // useful than the browser's zoom reset on a node-graph app.
+      if ((e.metaKey || e.ctrlKey) && e.key === '0') {
+        e.preventDefault();
+        fitAllNodes();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [fitAllNodes]);
 
   // Load on mount
   useEffect(() => {
@@ -158,7 +184,7 @@ function CanvasInner({ canvasId }: CanvasProps) {
   return (
     <CanvasIdContext.Provider value={canvasId}>
     <div className="relative w-screen h-screen canvas-grid">
-      <TitleBar title={title} onTitleChange={setTitle} canvasId={canvasId} />
+      <TitleBar title={title} onTitleChange={setTitle} canvasId={canvasId} onFitView={fitAllNodes} />
       <Toolbar onOpenDiscover={() => setDiscoverOpen(true)} />
 
       <ReactFlow
@@ -215,10 +241,12 @@ function TitleBar({
   title,
   onTitleChange,
   canvasId,
+  onFitView,
 }: {
   title: string;
   onTitleChange: (t: string) => void;
   canvasId: string;
+  onFitView: () => void;
 }) {
   const deleteCanvas = async () => {
     if (!confirm(`Delete "${title}"? This can't be undone.`)) return;
@@ -251,7 +279,14 @@ function TitleBar({
         />
       </div>
       <div className="pointer-events-auto flex items-center gap-4">
-        <span className="node-label opacity-60">autosaved · ⌘+Enter sends · ⌫ removes</span>
+        <span className="node-label opacity-60">autosaved · ⌘+Enter sends · ⌫ removes · ⌘+0 fits view</span>
+        <button
+          onClick={onFitView}
+          className="pill-btn text-bone-300 hover:text-ember hover:border-ember"
+          title="Frame all nodes in view (⌘+0)"
+        >
+          fit view
+        </button>
         <button
           onClick={deleteCanvas}
           className="pill-btn text-bone-300 hover:text-red-400 hover:border-red-400"
