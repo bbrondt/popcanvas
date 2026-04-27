@@ -12,6 +12,7 @@ import type { Node, Edge } from '@xyflow/react';
 export type NodeKind =
   | 'youtube'
   | 'pdf'
+  | 'file'
   | 'url'
   | 'image'
   | 'text'
@@ -47,6 +48,27 @@ export interface PdfNodeData extends BaseNodeData {
   /** Storage path inside the canvas-uploads bucket. */
   storagePath?: string;
   filename?: string;
+  pageCount?: number;
+}
+
+/**
+ * Generic document upload — handles PDF, Markdown, plain text, Word
+ * (.docx), and CSV in a single node. The extractor branches on the
+ * file extension / mime type. Newer canvases should use this rather
+ * than the PDF-specific node; the old kind sticks around for backward
+ * compat with existing canvases.
+ */
+export interface FileNodeData extends BaseNodeData {
+  kind: 'file';
+  storagePath?: string;
+  filename?: string;
+  /** mime type as reported by the browser, used for icon + extractor
+   *  routing. Falls back to extension sniffing on the server. */
+  mimeType?: string;
+  /** Subkind so the UI can pick the right label/icon. Filled in after
+   *  extraction. */
+  fileType?: 'pdf' | 'markdown' | 'text' | 'docx' | 'csv' | 'other';
+  /** Total pages for PDFs; word count for everything else. */
   pageCount?: number;
 }
 
@@ -184,6 +206,7 @@ export interface VideoGenNodeData extends BaseNodeData {
 export type SourceNodeData =
   | YoutubeNodeData
   | PdfNodeData
+  | FileNodeData
   | UrlNodeData
   | ImageNodeData
   | TextNodeData;
@@ -223,6 +246,7 @@ export interface ChatRequest {
 export const NODE_WIDTH = {
   youtube: 280,
   pdf: 280,
+  file: 280,
   url: 280,
   image: 240,
   text: 280,
