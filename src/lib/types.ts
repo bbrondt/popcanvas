@@ -148,6 +148,13 @@ export interface ArtifactNodeData extends BaseNodeData {
    * Cleared after the first generation so re-mounts don't re-fire.
    */
   autoGenerate?: boolean;
+  /**
+   * When true, the artifact renders as a compact brand-colored card showing
+   * just template/icon/status. Click expands to the full editor. Chat-spawned
+   * artifacts default to collapsed so the canvas reads as a row of output
+   * cards rather than a wall of editors.
+   */
+  collapsed?: boolean;
 }
 
 /**

@@ -2,12 +2,17 @@ import { useState, useRef, useEffect } from 'react';
 import { useReactFlow, useStore, type NodeProps } from '@xyflow/react';
 import { NodeShell } from './NodeShell';
 import { TEMPLATES, getTemplate } from '@/lib/ai/templates';
+import { TemplateIconChip, getTemplateVisual } from './artifactVisuals';
 import {
   NODE_WIDTH,
   type ArtifactNodeData,
   type ArtifactTemplateId,
   type SourceNodeData,
 } from '@/lib/types';
+
+/** Collapsed-card width — narrower than the full editor so a row of cards
+ *  reads as a list of output destinations rather than overlapping panels. */
+const ARTIFACT_CARD_WIDTH = 280;
 
 /**
  * The artifact node is the production sibling of the chat node:
@@ -180,14 +185,98 @@ export function ArtifactNode({ id, data, selected }: NodeProps) {
   };
 
   const status = isGenerating ? 'pending' : output ? 'ready' : 'idle';
+  const collapsed = d.collapsed === true;
+  const setCollapsed = (v: boolean) => flow.updateNodeData(id, { ...d, collapsed: v });
+  const visual = getTemplateVisual(template);
+
+  if (collapsed) {
+    return (
+      <NodeShell
+        id={id}
+        selected={!!selected}
+        width={ARTIFACT_CARD_WIDTH}
+        inputHandle
+        outputHandle
+        status={status}
+      >
+        <button
+          type="button"
+          onClick={() => setCollapsed(false)}
+          className="nodrag w-full flex items-center gap-3 text-left group"
+          title="Expand artifact"
+        >
+          <TemplateIconChip templateId={template} size={36} />
+          <div className="flex-1 min-w-0">
+            <div className="font-display text-[13px] font-medium text-bone-50 truncate leading-tight">
+              {visual.label}
+            </div>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <span
+                className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                  isGenerating ? 'bg-ember animate-pulse' : output ? 'bg-moss' : 'bg-bone-400'
+                }`}
+              />
+              <span className="node-label opacity-70">
+                {isGenerating ? 'generating' : output ? `${output.length.toLocaleString()} chars` : 'idle'}
+              </span>
+            </div>
+          </div>
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="text-bone-300 group-hover:text-ember transition-colors flex-shrink-0"
+            aria-hidden
+          >
+            <polyline points="9 18 15 12 9 6" />
+          </svg>
+        </button>
+        {error && (
+          <div className="mt-2 border border-red-500/40 bg-red-500/5 px-2 py-1 text-[11px] font-sans text-red-300 rounded-sm">
+            {error}
+          </div>
+        )}
+      </NodeShell>
+    );
+  }
 
   return (
     <NodeShell id={id} selected={!!selected} width={NODE_WIDTH.artifact} inputHandle outputHandle status={status}>
-      <div className="flex items-center justify-between mb-2">
-        <span className="node-label">✦ artifact</span>
-        <span className={`node-label ${isGenerating ? 'text-ember' : output ? 'text-moss' : 'text-bone-400'}`}>
-          {isGenerating ? 'generating…' : output ? 'ready' : 'idle'}
-        </span>
+      <div className="flex items-center gap-2.5 pb-2.5 mb-3 border-b border-ink-600/70">
+        <TemplateIconChip templateId={template} size={28} />
+        <div className="flex-1 min-w-0">
+          <div className="font-display text-[13px] font-medium text-bone-50 truncate leading-tight">
+            {visual.label}
+          </div>
+          <div className="flex items-center gap-1.5 mt-0.5">
+            <span
+              className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                isGenerating ? 'bg-ember animate-pulse' : output ? 'bg-moss' : 'bg-bone-400'
+              }`}
+            />
+            <span className="node-label opacity-70">
+              {isGenerating ? 'generating' : output ? 'ready' : 'idle'}
+            </span>
+          </div>
+        </div>
+        <button
+          onClick={() => setCollapsed(true)}
+          className="nodrag w-6 h-6 flex items-center justify-center text-bone-300 hover:text-ember hover:bg-ember/10 rounded transition-colors"
+          title="Collapse to card"
+          aria-label="Collapse to card"
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="4 14 10 14 10 20" />
+            <polyline points="20 10 14 10 14 4" />
+            <line x1="14" y1="10" x2="21" y2="3" />
+            <line x1="3" y1="21" x2="10" y2="14" />
+          </svg>
+        </button>
       </div>
 
       <UpstreamPanel upstream={upstream} />
