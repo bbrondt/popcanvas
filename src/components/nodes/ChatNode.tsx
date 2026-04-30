@@ -374,6 +374,12 @@ export function ChatNode({ id, data, selected }: NodeProps) {
     flow.addEdges(newEdges);
   };
 
+  const headerTitle = d.branchTitle?.trim() || 'AI Assistant';
+  const focusSelf = () => {
+    flow.fitView({ nodes: [{ id }], padding: 0.4, duration: 320 });
+  };
+  const showHero = messages.length === 0 && !streamingText && !d.error;
+
   return (
     <NodeShell
       id={id}
@@ -383,71 +389,177 @@ export function ChatNode({ id, data, selected }: NodeProps) {
       outputHandle
       status={isStreaming ? 'pending' : 'ready'}
     >
-      <div className="flex items-center justify-between mb-2 gap-2">
-        <span className="node-label flex-shrink-0">⌘ chat</span>
-        {d.branchTitle && (
-          <span
-            className="node-label text-ember/90 truncate flex-1 text-center"
-            title={d.branchTitle}
-          >
-            {d.branchTitle}
-          </span>
-        )}
-        <span className={`node-label flex-shrink-0 ${isStreaming ? 'text-ember' : 'text-moss'}`}>
-          {isStreaming ? 'thinking…' : 'ready'}
-        </span>
-      </div>
+      <ChatHeader title={headerTitle} isStreaming={isStreaming} onFocus={focusSelf} />
 
       <UpstreamPanel upstream={upstream} />
 
-      <MessagesScroller
-        messages={messages}
-        streamingText={streamingText}
-        emptyHint={upstream.length === 0
-          ? 'Connect sources, then ask a question.'
-          : 'Ask a question about your context.'}
-        error={!isStreaming ? d.error : undefined}
-        onDismissError={() => flow.updateNodeData(id, { ...d, error: undefined })}
-      />
-
-      <div className="border-t border-ink-600 pt-2">
-        {upstream.length > 0 && !isStreaming && (
-          <QuickActions onPick={(prompt) => setDraft(prompt)} disabled={isStreaming} />
-        )}
-        <textarea
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Ask something about your sources…"
-          rows={2}
-          disabled={isStreaming}
-          className="nodrag nowheel w-full bg-ink-900 border border-ink-600 px-2 py-1.5 text-xs font-mono text-bone-100 focus:border-ember outline-none rounded-sm resize-none"
+      {showHero ? (
+        <AiActionsHero
+          onPick={(prompt) => {
+            void handleSend(prompt);
+          }}
+          disabled={isStreaming || upstream.length === 0}
+          hasUpstream={upstream.length > 0}
         />
-        <div className="flex items-center justify-between mt-2">
-          <span className="node-label opacity-60">⌘↵ to send</span>
+      ) : (
+        <MessagesScroller
+          messages={messages}
+          streamingText={streamingText}
+          error={!isStreaming ? d.error : undefined}
+          onDismissError={() => flow.updateNodeData(id, { ...d, error: undefined })}
+        />
+      )}
+
+      <div className="pt-2">
+        <div className="flex items-end gap-2">
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Type your message…"
+            rows={1}
+            disabled={isStreaming}
+            className="nodrag nowheel flex-1 bg-ink-900/80 border border-ink-600 px-4 py-2 text-[12px] font-sans text-bone-100 placeholder:text-bone-400 focus:border-ember/60 outline-none rounded-2xl resize-none leading-snug min-h-[36px] max-h-32"
+          />
           <button
             onClick={() => handleSend()}
             disabled={!draft.trim() || isStreaming}
-            className="pill-btn-primary disabled:opacity-40 disabled:cursor-not-allowed"
+            className="send-button nodrag"
+            title="Send (⌘↵)"
+            aria-label="Send message"
           >
-            {isStreaming ? 'thinking…' : 'send'}
+            <ArrowUpIcon />
           </button>
+        </div>
+        <div className="mt-1.5 text-center">
+          <span className="node-label opacity-50">⌘↵ to send</span>
         </div>
       </div>
     </NodeShell>
   );
 }
 
+function ChatHeader({
+  title,
+  isStreaming,
+  onFocus,
+}: {
+  title: string;
+  isStreaming: boolean;
+  onFocus: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-2.5 pb-2.5 mb-3 border-b border-ink-600/70">
+      <div className="w-7 h-7 rounded-full bg-gradient-to-br from-ember/25 to-neon/20 border border-ember/30 flex items-center justify-center flex-shrink-0 shadow-[0_0_10px_-2px_rgba(0,229,255,0.4)]">
+        <ChatBubbleIcon />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="font-display text-[13px] font-medium text-bone-50 truncate leading-tight">
+          {title}
+        </div>
+        <div className="flex items-center gap-1.5 mt-0.5">
+          <span
+            className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+              isStreaming ? 'bg-ember animate-pulse' : 'bg-moss'
+            }`}
+          />
+          <span className="node-label opacity-70">
+            {isStreaming ? 'thinking' : 'ready'}
+          </span>
+        </div>
+      </div>
+      <button
+        onClick={onFocus}
+        className="nodrag w-6 h-6 flex items-center justify-center text-bone-300 hover:text-ember hover:bg-ember/10 rounded transition-colors"
+        title="Focus this node"
+        aria-label="Focus this node"
+      >
+        <ExpandIcon />
+      </button>
+    </div>
+  );
+}
+
+function AiActionsHero({
+  onPick,
+  disabled,
+  hasUpstream,
+}: {
+  onPick: (prompt: string) => void;
+  disabled: boolean;
+  hasUpstream: boolean;
+}) {
+  return (
+    <div className="flex flex-col items-center justify-center py-6 px-2 mb-2">
+      <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-ember/15 to-neon/15 border border-ember/30 flex items-center justify-center mb-3 shadow-[0_0_18px_-4px_rgba(0,229,255,0.45)]">
+        <SparkleIcon />
+      </div>
+      <div className="font-display text-[14px] text-bone-50 mb-1 font-medium">AI Actions</div>
+      <div className="node-label opacity-60 mb-3">
+        {hasUpstream ? 'pick an action or type below' : 'connect a source to get started'}
+      </div>
+      <div className="flex flex-col gap-1.5 w-full max-w-[260px]">
+        {QUICK_PROMPTS.map((q) => (
+          <button
+            key={q.label}
+            onClick={() => onPick(q.prompt)}
+            disabled={disabled}
+            className="action-pill nodrag"
+            title={q.prompt}
+          >
+            {q.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ChatBubbleIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="text-ember">
+      <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+    </svg>
+  );
+}
+
+function ExpandIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="15 3 21 3 21 9" />
+      <polyline points="9 21 3 21 3 15" />
+      <line x1="21" y1="3" x2="14" y2="10" />
+      <line x1="3" y1="21" x2="10" y2="14" />
+    </svg>
+  );
+}
+
+function SparkleIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="text-ember">
+      <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1" />
+      <circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+function ArrowUpIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="12" y1="19" x2="12" y2="5" />
+      <polyline points="5 12 12 5 19 12" />
+    </svg>
+  );
+}
+
 function MessagesScroller({
   messages,
   streamingText,
-  emptyHint,
   error,
   onDismissError,
 }: {
   messages: ChatMessage[];
   streamingText: string;
-  emptyHint: string;
   error: string | undefined;
   onDismissError: () => void;
 }) {
@@ -466,13 +578,6 @@ function MessagesScroller({
       ref={ref}
       className="nowheel max-h-80 overflow-y-auto space-y-3 mb-3 pr-1 scroll-smooth"
     >
-      {messages.length === 0 && !streamingText && (
-        <div className="text-bone-400 font-mono text-[11px] py-4 text-center">
-          {emptyHint}
-          <br />
-          <span className="opacity-60">⌘ + Enter to send</span>
-        </div>
-      )}
       {messages.map((m) => (
         <Message key={m.id} message={m} />
       ))}
@@ -518,30 +623,10 @@ function isValidTemplate(t: string | undefined): t is ArtifactTemplateId {
 }
 
 const QUICK_PROMPTS: { label: string; prompt: string }[] = [
-  { label: 'summarize', prompt: 'Give me a concise summary of the connected sources, highlighting the most important points.' },
-  { label: 'takeaways', prompt: 'List the 5 most important takeaways from the connected sources, each as a single clear sentence.' },
-  { label: 'angles', prompt: 'Brainstorm 10 distinct content angles I could use for marketing material based on the connected sources. For each, give a one-line description and the audience it would best serve.' },
-  { label: 'questions', prompt: "What follow-up questions should I be asking based on these sources? List 5–10 questions that would deepen my understanding or surface what's missing." },
-  { label: 'quotes', prompt: 'Pull the 5 most quotable lines or statistics from the connected sources. For each, include the source it came from.' },
+  { label: 'Summarize', prompt: 'Give me a concise summary of the connected sources, highlighting the most important points.' },
+  { label: 'Key insights', prompt: 'List the 5 most important takeaways from the connected sources, each as a single clear sentence.' },
+  { label: 'Find new ideas', prompt: 'Brainstorm 10 distinct content angles I could use for marketing material based on the connected sources. For each, give a one-line description and the audience it would best serve.' },
 ];
-
-function QuickActions({ onPick, disabled }: { onPick: (p: string) => void; disabled: boolean }) {
-  return (
-    <div className="flex flex-wrap gap-1 mb-2">
-      {QUICK_PROMPTS.map((q) => (
-        <button
-          key={q.label}
-          onClick={() => onPick(q.prompt)}
-          disabled={disabled}
-          className="pill-btn text-[10px] py-1 px-2"
-          title={q.prompt}
-        >
-          {q.label}
-        </button>
-      ))}
-    </div>
-  );
-}
 
 function ChatError({ message, onDismiss }: { message: string; onDismiss: () => void }) {
   return (
