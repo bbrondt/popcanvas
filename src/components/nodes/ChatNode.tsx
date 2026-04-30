@@ -254,6 +254,7 @@ export function ChatNode({ id, data, selected }: NodeProps) {
         template: tplId,
         customInstructions,
         autoGenerate: true,
+        collapsed: true,
       } satisfies ArtifactNodeData,
     };
 
@@ -336,6 +337,7 @@ export function ChatNode({ id, data, selected }: NodeProps) {
             template: tplId,
             customInstructions,
             autoGenerate: true,
+            collapsed: true,
           } satisfies ArtifactNodeData,
         });
         newEdges.push({
